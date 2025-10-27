@@ -1,0 +1,6 @@
+[submodule "extern/CommonLibF4PreNG"]
+	path = extern/CommonLibF4PreNG
+	url = https://github.com/powerof3/CommonLibF4.git
+[submodule "extern/CommonLibF4PostNG"]
+	path = extern/CommonLibF4PostNG
+	url = https://github.com/powerof3/CommonLibF4.git
