@@ -9,8 +9,15 @@
     "boost-stl-interfaces",
     "fmt",
     "rsm-mmio",
-    "spdlog",
+    {
+      "name": "spdlog",
+      "features": [ "wchar" ]
+    },
     "xbyak",
-    "detours"
+    "directxtk",
+    "directxtex",
+    "directx-headers",
+    "magic-enum",
+    "simpleini"
   ]
 }

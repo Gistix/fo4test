@@ -109,10 +109,6 @@ elseif(BUILD_POST_NG)
 	add_compile_definitions(FALLOUT_POST_NG)
 	set(CommonLibName "CommonLibF4")
 	set(CommonLibPath "extern/CommonLibF4PostNG/CommonLibF4")
-message(
-FATAL_ERROR
-	"A game version must be selected."
-)
 endif()	
 
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)

@@ -1,5 +1,6 @@
 
-#include <d3d11.h>
+#include "DX11Hooks.h"
+#include "Upscaling.h"
 
 void InitializeLog()
 {
@@ -44,112 +45,34 @@ extern "C" DLLEXPORT constinit auto F4SEPlugin_Version = []() noexcept {
 
 	return data;
 }();
+#else
+extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface*, F4SE::PluginInfo* a_info)
+{
+	a_info->name = Plugin::NAME.data();
+	a_info->infoVersion = F4SE::PluginInfo::kVersion;
+	a_info->version = 0;
+	return true;
+}
 #endif
-
-decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChain;
-
-typedef HRESULT(WINAPI* D3D11CreateDeviceAndSwapChain_t)(
-	IDXGIAdapter* pAdapter,
-	D3D_DRIVER_TYPE DriverType,
-	HMODULE Software,
-	UINT Flags,
-	const D3D_FEATURE_LEVEL* pFeatureLevels,
-	UINT FeatureLevels,
-	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
-	IDXGISwapChain** ppSwapChain,
-	ID3D11Device** ppDevice,
-	D3D_FEATURE_LEVEL* pFeatureLevel,
-	ID3D11DeviceContext** ppImmediateContext);
-
-// Store the original function
-D3D11CreateDeviceAndSwapChain_t OriginalD3D11CreateDeviceAndSwapChain = nullptr;
-
-// Hooked function
-HRESULT WINAPI HookedD3D11CreateDeviceAndSwapChain(
-	IDXGIAdapter* pAdapter,
-	D3D_DRIVER_TYPE DriverType,
-	HMODULE Software,
-	UINT Flags,
-	const D3D_FEATURE_LEVEL* pFeatureLevels,
-	UINT FeatureLevels,
-	UINT SDKVersion,
-	const DXGI_SWAP_CHAIN_DESC* pSwapChainDesc,
-	IDXGISwapChain** ppSwapChain,
-	ID3D11Device** ppDevice,
-	D3D_FEATURE_LEVEL* pFeatureLevel,
-	ID3D11DeviceContext** ppImmediateContext)
-{
-	HRESULT hr = OriginalD3D11CreateDeviceAndSwapChain(
-		pAdapter,
-		DriverType,
-		Software,
-		Flags,
-		pFeatureLevels,
-		FeatureLevels,
-		SDKVersion,
-		pSwapChainDesc,
-		ppSwapChain,
-		ppDevice,
-		pFeatureLevel,
-		ppImmediateContext);
-
-	return hr;
-}
-
-void AttachD3D11Hook()
-{
-	HMODULE hD3D11 = GetModuleHandleA("d3d11.dll");
-
-	// Get the original function address
-	OriginalD3D11CreateDeviceAndSwapChain = (D3D11CreateDeviceAndSwapChain_t)GetProcAddress(hD3D11, "D3D11CreateDeviceAndSwapChain");
-
-	// Attach the detour
-	DetourTransactionBegin();
-	DetourUpdateThread(GetCurrentThread());
-	DetourAttach(&(PVOID&)OriginalD3D11CreateDeviceAndSwapChain, HookedD3D11CreateDeviceAndSwapChain);
-	DetourTransactionCommit();
-}
-
-uint32_t pixelShaderID = 0;
-
-struct BSDFLightShaderMacros_GetPixelShaderID
-{
-	static uint32_t thunk(uint32_t rawShaderID)
-	{
-		auto ret = func(rawShaderID);
-		pixelShaderID = ret;
-		return ret;
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct DeferredLight_SunShadow
-{
-	static void thunk(struct BSRenderPass* , unsigned int , char )
-	{
-		//func(a1, a2, a3);
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-static void InstallHooks()
-{
-//	AttachD3D11Hook();
-
-	uintptr_t base = (uintptr_t)GetModuleHandleA(nullptr);
-
-//	stl::write_thunk_call<BSDFLightShaderMacros_GetPixelShaderID>(moduleBase + 0x28C06A0 + 0x1F);
-
-	stl::write_thunk_call<DeferredLight_SunShadow>(base + 0x28529B0 + 0x159D);
-}
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
 	F4SE::Init(a_f4se);
 
+#ifndef NDEBUG
+#	if defined(FALLOUT_POST_NG)
+	while (!REX::W32::IsDebuggerPresent()) {};
+#	else
+	while (!IsDebuggerPresent()) {};
+#	endif
+#endif
+
 	InitializeLog();
-	InstallHooks();
+
+	DX11Hooks::Install();
+	Upscaling::InstallHooks();
+
+	Upscaling::GetSingleton()->LoadSettings();
 
 	return true;
 }
