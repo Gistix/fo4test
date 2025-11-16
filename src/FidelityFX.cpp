@@ -119,11 +119,9 @@ void FidelityFX::Present(bool a_useFrameGeneration)
 		dispatchParameters.motionVectorScale.y = (float)swapChain->swapChainDesc.Height;
 		dispatchParameters.renderSize.width = swapChain->swapChainDesc.Width;
 		dispatchParameters.renderSize.height = swapChain->swapChainDesc.Height;
-
-		//static auto gameViewport = RE::BSGraphics::State::GetSingleton();
 		
-		dispatchParameters.jitterOffset.x = 0 ;
-		dispatchParameters.jitterOffset.y = 0 * float(swapChain->swapChainDesc.Height) / 2.0f;
+		dispatchParameters.jitterOffset.x = 0;
+		dispatchParameters.jitterOffset.y = 0;
 
 		dispatchParameters.frameTimeDelta = deltaTime * 1000.f;
 

@@ -150,6 +150,9 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
+	if (!upscaling->useFrameGenerationThisFrame)
+		SyncInterval = 0;
+
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
 
@@ -162,7 +165,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
-	if (SyncInterval == 0)
+	if (SyncInterval == 0 && upscaling->useFrameGenerationThisFrame)
 		upscaling->FrameLimiter(useFrameGenerationThisFrame);
 
 	upscaling->useFrameGenerationThisFrame = false;
