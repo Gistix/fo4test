@@ -435,5 +435,10 @@ void Upscaling::PostDisplay()
 	
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared->resource.get(), swapChainResource);
 
-	useFrameGenerationThisFrame = true;
+	inGame = true;
+}
+
+void Upscaling::ThirdPerson()
+{
+	blockFrameGeneration = true;
 }

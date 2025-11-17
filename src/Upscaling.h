@@ -42,7 +42,8 @@ public:
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 
 	bool setupBuffers = false;
-	bool useFrameGenerationThisFrame = false;
+	bool inGame = false;
+	bool blockFrameGeneration = false;
 
 	void LoadSettings();
 
@@ -60,6 +61,7 @@ public:
 	static double GetRefreshRate(HWND a_window);
 
 	void PostDisplay();
+	void ThirdPerson();
 
 	struct SetUseDynamicResolutionViewportAsDefaultViewport
 	{
@@ -81,6 +83,16 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	struct ThirdPersonState__Update
+	{
+		static void thunk(RE::TESCameraState* This)
+		{
+			func(This);
+			GetSingleton()->ThirdPerson();
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	static void InstallHooks()
 	{
 #if defined(FALLOUT_POST_NG)
@@ -90,6 +102,7 @@ public:
 		stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(676851));
 		stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
 #endif
+		stl::write_vfunc<0x12, ThirdPersonState__Update>(RE::VTABLE::ThirdPersonState[0]);
 
 		logger::info("[Upscaling] Installed hooks");
 	}
