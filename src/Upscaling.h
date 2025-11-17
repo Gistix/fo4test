@@ -83,12 +83,12 @@ public:
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	struct ThirdPersonState__Update
+	struct ThirdPersonState__GetRotation
 	{
-		static void thunk(RE::TESCameraState* This)
+		static int64_t thunk(RE::TESCameraState* This, RE::NiQuaternion* a2)
 		{
-			func(This);
 			GetSingleton()->ThirdPerson();
+			return func(This, a2);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -102,7 +102,7 @@ public:
 		stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(676851));
 		stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
 #endif
-		stl::write_vfunc<0x12, ThirdPersonState__Update>(RE::VTABLE::ThirdPersonState[0]);
+		stl::write_vfunc<0x12, ThirdPersonState__GetRotation>(RE::VTABLE::ThirdPersonState[0]);
 
 		logger::info("[Upscaling] Installed hooks");
 	}
