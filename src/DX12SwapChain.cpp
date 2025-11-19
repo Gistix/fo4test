@@ -141,7 +141,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	auto upscaling = Upscaling::GetSingleton();
 
-	bool useFrameGenerationThisFrame = upscaling->settings.frameGenerationMode && upscaling->inGame && !upscaling->blockFrameGeneration;
+	bool useFrameGenerationThisFrame = upscaling->settings.frameGenerationMode && upscaling->inGame;
 
 	FidelityFX::GetSingleton()->Present(useFrameGenerationThisFrame);
 
@@ -161,7 +161,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
-	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
+	// If VSync is disabled, use frame limiter to prevent tearing and optimize pacing
 	if (SyncInterval == 0 && upscaling->inGame)
 		upscaling->FrameLimiter(useFrameGenerationThisFrame);
 
@@ -170,7 +170,6 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		upscaling->GameFrameLimiter();
 
 	upscaling->inGame = false;
-	upscaling->blockFrameGeneration = false;
 
 	return S_OK;
 }

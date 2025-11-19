@@ -30,7 +30,7 @@ public:
 
 	bool d3d12Interop = false;
 	double refreshRate = 0.0f;
-	
+
 	Texture2D* HUDLessBufferShared;
 	Texture2D* depthBufferShared;
 	Texture2D* motionVectorBufferShared;
@@ -43,7 +43,6 @@ public:
 
 	bool setupBuffers = false;
 	bool inGame = false;
-	bool blockFrameGeneration = false;
 
 	void LoadSettings();
 
@@ -61,49 +60,6 @@ public:
 	static double GetRefreshRate(HWND a_window);
 
 	void PostDisplay();
-	void ThirdPerson();
 
-	struct SetUseDynamicResolutionViewportAsDefaultViewport
-	{
-		static void thunk(RE::BSGraphics::RenderTargetManager* This, bool a_true)
-		{
-			if (!a_true)
-				GetSingleton()->PostDisplay();
-			func(This, a_true);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct WindowSizeChanged
-	{
-		static void thunk(RE::BSGraphics::Renderer*, unsigned int)
-		{
-			
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	struct ThirdPersonState__GetRotation
-	{
-		static int64_t thunk(RE::TESCameraState* This, RE::NiQuaternion* a2)
-		{
-			GetSingleton()->ThirdPerson();
-			return func(This, a2);
-		}
-		static inline REL::Relocation<decltype(thunk)> func;
-	};
-
-	static void InstallHooks()
-	{
-#if defined(FALLOUT_POST_NG)
-		stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2277194));
-		stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
-#else
-		stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(676851));
-		stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
-#endif
-		stl::write_vfunc<0x12, ThirdPersonState__GetRotation>(RE::VTABLE::ThirdPersonState[0]);
-
-		logger::info("[Upscaling] Installed hooks");
-	}
+	static void InstallHooks();
 };

@@ -3,6 +3,7 @@
 #include <d3dcompiler.h>
 
 #include "DX12SwapChain.h"
+#include "DirectXMath.h"
 
 enum class RenderTarget
 {
@@ -261,6 +262,71 @@ void Upscaling::CreateFrameGenerationResources()
 	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", "cs_5_0");	
 }
 
+struct WindowSizeChanged
+{
+	static void thunk(RE::BSGraphics::Renderer*, unsigned int)
+	{
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+bool badGeometryUpdate = false;
+
+struct BSGeometry_UpdateWorldData
+{
+	static void thunk(RE::NiAVObject* a_object, RE::NiUpdateData* a_updateData)
+	{
+		if (badGeometryUpdate)
+			return;
+		func(a_object, a_updateData);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+struct PlayerCharacter_UpdateScenegraph
+{
+	static void thunk(RE::NiAVObject* NiAVObject, RE::NiUpdateData* NiUpdateData)
+	{
+		badGeometryUpdate = true;
+		func(NiAVObject, NiUpdateData);
+		badGeometryUpdate = false;
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+struct SetUseDynamicResolutionViewportAsDefaultViewport
+{
+	static void thunk(RE::BSGraphics::RenderTargetManager* This, bool a_true)
+	{
+		if (!a_true)
+			Upscaling::GetSingleton()->PostDisplay();
+		func(This, a_true);
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
+void Upscaling::InstallHooks()
+{
+#if defined(FALLOUT_POST_NG)
+	stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2277194));
+	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
+	stl::detour_thunk<BSGeometry_UpdateWorldData>(REL::ID(2270409));
+	stl::write_thunk_call<PlayerCharacter_UpdateScenegraph>(REL::ID(2233006).address() + 0x286);
+#else
+	// Fix game initialising twice
+	stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
+
+	// Watch frame presentation
+	stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(676851));
+	
+	// Fix broken motion vectors from bad geometry updates during player scenegraph update
+	stl::detour_thunk<BSGeometry_UpdateWorldData>(REL::ID(551661));
+	stl::write_thunk_call<PlayerCharacter_UpdateScenegraph>(REL::ID(978934).address() + 0x2ED);
+#endif
+
+	logger::info("[Upscaling] Installed hooks");
+}
+
 void Upscaling::CopyBuffersToSharedResources()
 {
 	if (!d3d12Interop)
@@ -283,6 +349,7 @@ void Upscaling::CopyBuffersToSharedResources()
 		{
 			uint32_t dispatchX = (uint32_t)std::ceil(float(dx12SwapChain->swapChainDesc.Width) / 8.0f);
 			uint32_t dispatchY = (uint32_t)std::ceil(float(dx12SwapChain->swapChainDesc.Height) / 8.0f);
+
 
 			ID3D11ShaderResourceView* views[1] = { reinterpret_cast<ID3D11ShaderResourceView*>(depth.srViewDepth) };
 			context->CSSetShaderResources(0, ARRAYSIZE(views), views);
@@ -436,9 +503,4 @@ void Upscaling::PostDisplay()
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared->resource.get(), swapChainResource);
 
 	inGame = true;
-}
-
-void Upscaling::ThirdPerson()
-{
-	blockFrameGeneration = true;
 }
