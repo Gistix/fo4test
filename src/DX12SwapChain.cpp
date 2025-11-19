@@ -150,6 +150,10 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
+	// Fix FPS cap being e.g. 55 instead of 60
+	if (!upscaling->highFPSPhysicsFixLoaded && SyncInterval > 0)
+		SyncInterval = 1;
+
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
 
