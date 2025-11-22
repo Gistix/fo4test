@@ -2,7 +2,7 @@
 
 RMDIR dist /S /Q
 
-cmake -S . --preset=POST-NG --check-stamp-file "build\CMakeFiles\generate.stamp"
+cmake -S . --preset=POST-AE --check-stamp-file "build\CMakeFiles\generate.stamp"
 if %ERRORLEVEL% NEQ 0 exit 1
 cmake --build build --config Release
 if %ERRORLEVEL% NEQ 0 exit 1
