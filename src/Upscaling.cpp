@@ -270,7 +270,8 @@ struct WindowSizeChanged
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
-bool badGeometryUpdate = false;
+thread_local bool badGeometryUpdate = false;
+thread_local bool fixAnimation = false;
 
 struct BSGeometry_UpdateWorldData
 {
@@ -278,7 +279,12 @@ struct BSGeometry_UpdateWorldData
 	{
 		if (badGeometryUpdate)
 			return;
+
 		func(a_object, a_updateData);
+
+		if (fixAnimation)
+			a_object->previousWorld = a_object->world;		
+
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
@@ -305,13 +311,27 @@ struct SetUseDynamicResolutionViewportAsDefaultViewport
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+struct TESObjectREFR_SetSequencePosition
+{
+	static void thunk(void* This, RE::NiControllerManager* a2,
+		const char* a3,
+		float a4)
+	{
+		fixAnimation = true;
+		func(This, a2, a3, a4);
+		fixAnimation = false;
+	}
+	static inline REL::Relocation<decltype(thunk)> func;
+};
+
 void Upscaling::InstallHooks()
 {
 #if defined(FALLOUT_POST_NG)
-	stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2277194));
 	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
+	stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2277194));
 	stl::detour_thunk<BSGeometry_UpdateWorldData>(REL::ID(2270409));
 	stl::write_thunk_call<PlayerCharacter_UpdateScenegraph>(REL::ID(2233006).address() + 0x286);
+	stl::detour_thunk<TESObjectREFR__SetSequencePosition>(REL::ID(2200766));
 #else
 	// Fix game initialising twice
 	stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
@@ -319,9 +339,10 @@ void Upscaling::InstallHooks()
 	// Watch frame presentation
 	stl::detour_thunk<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(676851));
 	
-	// Fix broken motion vectors from bad geometry updates during player scenegraph update
+	// Fix broken motion vectors from bad geometry updates
 	stl::detour_thunk<BSGeometry_UpdateWorldData>(REL::ID(551661));
 	stl::write_thunk_call<PlayerCharacter_UpdateScenegraph>(REL::ID(978934).address() + 0x2ED);
+	stl::detour_thunk<TESObjectREFR_SetSequencePosition>(REL::ID(854236));
 #endif
 
 	logger::info("[Upscaling] Installed hooks");
