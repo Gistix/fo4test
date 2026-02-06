@@ -1,6 +1,6 @@
 #include "FidelityFX.h"
 
-#include "Upscaling.h"
+#include "Raytracing.h"
 
 #include "DX12SwapChain.h"
 #include <dx12/ffx_api_dx12.hpp>
@@ -56,7 +56,7 @@ void FidelityFX::SetupFrameGeneration()
 
 void FidelityFX::Present(bool a_useFrameGeneration)
 {
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = Raytracing::GetSingleton();
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 	auto commandList = dx12SwapChain->commandLists[dx12SwapChain->frameIndex].get();
 	

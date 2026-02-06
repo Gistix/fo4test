@@ -4,7 +4,7 @@
 #include <dxgi1_6.h>
 
 #include "FidelityFX.h"
-#include "Upscaling.h"
+#include "Raytracing.h"
 
 extern bool enbLoaded;
 
@@ -164,7 +164,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		}
 	}
 
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = Raytracing::GetSingleton();
 
 	bool useFrameGenerationThisFrame = false;
 	

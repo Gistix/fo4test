@@ -3,7 +3,7 @@
 #include <d3d11.h>
 #pragma comment(lib, "d3d11.lib")
 
-#include "Upscaling.h"
+#include "Raytracing.h"
 #include "DX12SwapChain.h"
 #include "FidelityFX.h"
 
@@ -53,7 +53,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	auto upscaling = Upscaling::GetSingleton();
+	auto upscaling = Raytracing::GetSingleton();
 
 	if (pSwapChainDesc->Windowed) {
 		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
@@ -62,7 +62,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 
 		if (fidelityFX->module) {
 			upscaling->d3d12Interop = true;
-			upscaling->refreshRate = Upscaling::GetRefreshRate(pSwapChainDesc->OutputWindow);
+			upscaling->refreshRate = Raytracing::GetRefreshRate(pSwapChainDesc->OutputWindow);
 
 			IDXGIFactory4* dxgiFactory;
 			pAdapter->GetParent(IID_PPV_ARGS(&dxgiFactory));

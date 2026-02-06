@@ -1,9 +1,11 @@
-#include "Upscaling.h"
+#include "Raytracing.h"
 
 #include <d3dcompiler.h>
 
 #include "DX12SwapChain.h"
 #include "DirectXMath.h"
+
+#include "ShaderUtils.h"
 
 enum class RenderTarget
 {
@@ -79,39 +81,7 @@ enum class DepthStencilTarget
 	kCount = 13
 };
 
-ID3D11DeviceChild* CompileShader(const wchar_t* FilePath, const char* ProgramType, const char* Program = "main")
-{
-	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
-	auto device = reinterpret_cast<ID3D11Device*>(rendererData->device);
-
-	// Compiler setup
-	uint32_t flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-
-	ID3DBlob* shaderBlob;
-	ID3DBlob* shaderErrors;
-
-	std::string str;
-	std::wstring path{ FilePath };
-	std::transform(path.begin(), path.end(), std::back_inserter(str), [](wchar_t c) {
-		return (char)c;
-	});
-	if (!std::filesystem::exists(FilePath)) {
-		logger::error("Failed to compile shader; {} does not exist", str);
-		return nullptr;
-	}
-	if (FAILED(D3DCompileFromFile(FilePath, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, Program, ProgramType, flags, 0, &shaderBlob, &shaderErrors))) {
-		logger::warn("Shader compilation failed:\n\n{}", shaderErrors ? static_cast<char*>(shaderErrors->GetBufferPointer()) : "Unknown error");
-		return nullptr;
-	}
-	if (shaderErrors)
-		logger::debug("Shader logs:\n{}", static_cast<char*>(shaderErrors->GetBufferPointer()));
-
-	ID3D11ComputeShader* regShader;
-	DX::ThrowIfFailed(device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &regShader));
-	return regShader;
-}
-
-void Upscaling::LoadSettings()
+void Raytracing::LoadSettings()
 {
 	logger::info("[Frame Generation] Loading settings");
 
@@ -126,7 +96,7 @@ void Upscaling::LoadSettings()
 	logger::info("[Frame Generation] bFrameLimitMode: {}", settings.frameLimitMode);
 }
 
-void Upscaling::PostPostLoad()
+void Raytracing::PostPostLoad()
 {
 	highFPSPhysicsFixLoaded = GetModuleHandleA("Data\\F4SE\\Plugins\\HighFPSPhysicsFix.dll") != nullptr;
 
@@ -135,10 +105,10 @@ void Upscaling::PostPostLoad()
 	else
 		logger::info("[Frame Generation] HighFPSPhysicsFix.dll is not loaded");
 
-	InstallHooks();
+	Hooks::Install();
 }
 
-void Upscaling::CreateFrameGenerationResources()
+void Raytracing::CreateFrameGenerationResources()
 {
 	logger::info("[Frame Generation] Creating resources");
 	
@@ -262,11 +232,11 @@ void Upscaling::CreateFrameGenerationResources()
 		}
 	}
 
-	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", "cs_5_0");	
-	generateSharedBuffersCS = (ID3D11ComputeShader*)CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\GenerateSharedBuffersCS.hlsl", "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
+	generateSharedBuffersCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\GenerateSharedBuffersCS.hlsl", "cs_5_0");
 }
 
-void Upscaling::PreAlpha()
+void Raytracing::PreAlpha()
 {
 	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
@@ -277,7 +247,7 @@ void Upscaling::PreAlpha()
 	context->CopyResource(reinterpret_cast<ID3D11Texture2D*>(colorMain.texture), reinterpret_cast<ID3D11Texture2D*>(colorPostAlpha.texture));
 }
 
-void Upscaling::PostAlpha()
+void Raytracing::PostAlpha()
 {
 	if (!d3d12Interop)
 		return;
@@ -331,7 +301,7 @@ void Upscaling::PostAlpha()
 	}
 }
 
-void Upscaling::CopyBuffersToSharedResources()
+void Raytracing::CopyBuffersToSharedResources()
 {
 	if (!d3d12Interop)
 		return;
@@ -379,7 +349,7 @@ void Upscaling::CopyBuffersToSharedResources()
 	}	
 }
 
-void Upscaling::TimerSleepQPC(int64_t targetQPC)
+void Raytracing::TimerSleepQPC(int64_t targetQPC)
 {
 	LARGE_INTEGER currentQPC;
 	do {
@@ -387,7 +357,7 @@ void Upscaling::TimerSleepQPC(int64_t targetQPC)
 	} while (currentQPC.QuadPart < targetQPC);
 }
 
-void Upscaling::FrameLimiter(bool a_useFrameGeneration)
+void Raytracing::FrameLimiter(bool a_useFrameGeneration)
 {
 	static LARGE_INTEGER lastFrame = {};
 
@@ -412,7 +382,7 @@ void Upscaling::FrameLimiter(bool a_useFrameGeneration)
 	QueryPerformanceCounter(&lastFrame);
 }
 
-void Upscaling::GameFrameLimiter()
+void Raytracing::GameFrameLimiter()
 {
 	double bestRefreshRate = 60.0f;
 
@@ -453,7 +423,7 @@ void Upscaling::GameFrameLimiter()
 * SOFTWARE.
 */
 
-double Upscaling::GetRefreshRate(HWND a_window)
+double Raytracing::GetRefreshRate(HWND a_window)
 {
 	HMONITOR monitor = MonitorFromWindow(a_window, MONITOR_DEFAULTTONEAREST);
 	MONITORINFOEXW info;
@@ -492,7 +462,7 @@ double Upscaling::GetRefreshRate(HWND a_window)
 	return 60;
 }
 
-void Upscaling::PostDisplay()
+void Raytracing::PostDisplay()
 {
 	if (!d3d12Interop)
 		return;
@@ -511,7 +481,7 @@ void Upscaling::PostDisplay()
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared[dx12SwapChain->frameIndex]->resource.get(), swapChainResource);
 }
 
-void Upscaling::Reset()
+void Raytracing::Reset()
 {
 	if (!d3d12Interop)
 		return;
@@ -528,74 +498,4 @@ void Upscaling::Reset()
 	context->ClearRenderTargetView(HUDLessBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(depthBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(motionVectorBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
-}
-
-struct WindowSizeChanged
-{
-	static void thunk(RE::BSGraphics::Renderer*, unsigned int)
-	{
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct SetUseDynamicResolutionViewportAsDefaultViewport
-{
-	static void thunk(RE::BSGraphics::RenderTargetManager* This, bool a_true)
-	{
-		func(This, a_true);
-		if (!a_true)
-			Upscaling::GetSingleton()->PostDisplay();
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-bool reticleFix = false;
-
-struct DrawWorld_Forward
-{
-	static void thunk(void* a1)
-	{		
-		func(a1);
-
-		if (!reticleFix)
-			Upscaling::GetSingleton()->CopyBuffersToSharedResources();
-
-		reticleFix = false;
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-struct DrawWorld_Reticle
-{
-	static void thunk(void* a1)
-	{
-		auto upscaling = Upscaling::GetSingleton();
-		upscaling->PreAlpha();
-		func(a1);
-		reticleFix = true;
-		upscaling->PostAlpha();
-	}
-	static inline REL::Relocation<decltype(thunk)> func;
-};
-
-void Upscaling::InstallHooks()
-{
-#if defined(FALLOUT_POST_NG)
-	stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
-	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
-	stl::detour_thunk<DrawWorld_Forward>(REL::ID(2318315));
-	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);
-#else
-	// Fix game initialising twice
-	stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
-
-	// Watch frame presentation
-	stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(587723).address() + 0xE1);
-
-	// Fix reticles on motion vectors and depth
-	stl::detour_thunk<DrawWorld_Forward>(REL::ID(656535));
-	stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);
-#endif
-
-	logger::info("[Upscaling] Installed hooks");
 }

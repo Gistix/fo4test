@@ -1,8 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(
-	AAAFrameGeneration
-	VERSION 1.3.3
+	Raytracing
+	VERSION 0.0.1
 	LANGUAGES CXX
 )
 

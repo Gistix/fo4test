@@ -1,6 +1,6 @@
 
 #include "DX11Hooks.h"
-#include "Upscaling.h"
+#include "Raytracing.h"
 
 void InitializeLog()
 {
@@ -60,7 +60,7 @@ void MessageHandler(F4SE::MessagingInterface::Message* message)
 	switch (message->type) {
 	case F4SE::MessagingInterface::kPostPostLoad:
 		{
-			Upscaling::GetSingleton()->PostPostLoad();
+			Raytracing::GetSingleton()->PostPostLoad();
 			break;
 		}
 	}
@@ -82,7 +82,7 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 
 	DX11Hooks::Install();
 
-	Upscaling::GetSingleton()->LoadSettings();
+	Raytracing::GetSingleton()->LoadSettings();
 
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(MessageHandler);
