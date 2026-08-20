@@ -53,9 +53,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	D3D_FEATURE_LEVEL* pFeatureLevel,
 	ID3D11DeviceContext** ppImmediateContext)
 {
-	auto upscaling = Raytracing::GetSingleton();
+	auto raytracing = Raytracing::GetSingleton();
 
-	if (pSwapChainDesc->Windowed) {
+	/*if (pSwapChainDesc->Windowed) {
 		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
 		
 		auto fidelityFX = FidelityFX::GetSingleton();
@@ -113,7 +113,11 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		} else {
 			logger::warn("[Frame Generation] amd_fidelityfx_dx12.dll is not loaded, skipping proxy");
 		}
-	}
+	}*/
+
+	const D3D_FEATURE_LEVEL featureLevel = D3D_FEATURE_LEVEL_11_1;
+	pFeatureLevels = &featureLevel;
+	FeatureLevels = 1;
 
 	auto ret = ptrD3D11CreateDeviceAndSwapChain(
 		pAdapter,
@@ -129,6 +133,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 		pFeatureLevel,
 		ppImmediateContext);
 
+	raytracing->CreateD3D12Device(pAdapter, *ppDevice, *ppImmediateContext);
+
 	return ret;
 }
 
@@ -141,8 +147,8 @@ void DX11Hooks::Install()
 		logger::info("ENB not detected, using standard swap chain hook");
 	}
 
-	auto fidelityFX = FidelityFX::GetSingleton();
-	fidelityFX->LoadFFX();
+	//auto fidelityFX = FidelityFX::GetSingleton();
+	//fidelityFX->LoadFFX();
 
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 

@@ -14,14 +14,14 @@
 			},
 			"binaryDir": "${sourceDir}/build"
 		},
-        {
-            "name": "vcpkg",
-            "hidden": true,
-            "cacheVariables": {
-                "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
-                "VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
-            }
-        },
+		{
+			"name": "vcpkg",
+			"hidden": true,
+			"cacheVariables": {
+				"CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+				"VCPKG_TARGET_TRIPLET": "x64-windows-static-md"
+			}
+		},
 		{
 			"name": "win64",
 			"hidden": true,
@@ -36,7 +36,7 @@
 			"cacheVariables": {
 				"CMAKE_CXX_FLAGS": "/EHsc /MP /W4 /WX $penv{CXXFLAGS}"
 			},
-			"generator": "Visual Studio 17 2022",
+			"generator": "Visual Studio 18 2026",
 			"vendor": {
 				"microsoft.com/VisualStudioSettings/CMake/1.0": {
 					"intelliSenseMode": "windows-msvc-x64",
@@ -73,7 +73,7 @@
 				"msvc"
 			]
 		},
-				{
+		{
 			"name": "POST-AE",
 			"cacheVariables": {
 				"BUILD_PRE_NG": false,
@@ -86,6 +86,53 @@
 				"win64",
 				"msvc"
 			]
+		}
+	],
+	"buildPresets": [
+		{
+			"name": "PRE-NG-DEBUG",
+			"configurePreset": "PRE-NG",
+			"configuration": "Debug"
+		},
+		{
+			"name": "PRE-NG-RELEASE",
+			"configurePreset": "PRE-NG",
+			"configuration": "Release"
+		},
+		{
+			"name": "PRE-NG-RELWDEBG",
+			"configurePreset": "PRE-NG",
+			"configuration": "RelWithDebInfo"
+		},
+		{
+			"name": "POST-NG-DEBUG",
+			"configurePreset": "POST-NG",
+			"configuration": "Debug"
+		},
+		{
+			"name": "POST-NG-RELEASE",
+			"configurePreset": "POST-NG",
+			"configuration": "Release"
+		},
+		{
+			"name": "POST-NG-RELWDEBG",
+			"configurePreset": "POST-NG",
+			"configuration": "RelWithDebInfo"
+		},
+		{
+			"name": "POST-AE-DEBUG",
+			"configurePreset": "POST-AE",
+			"configuration": "Debug"
+		},
+		{
+			"name": "POST-AE-RELEASE",
+			"configurePreset": "POST-AE",
+			"configuration": "Release"
+		},
+		{
+			"name": "POST-AE-RELWDEBG",
+			"configurePreset": "POST-AE",
+			"configuration": "RelWithDebInfo"
 		}
 	]
 }

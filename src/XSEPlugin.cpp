@@ -68,6 +68,8 @@ void MessageHandler(F4SE::MessagingInterface::Message* message)
 
 extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f4se)
 {
+	SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+
 	F4SE::Init(a_f4se);
 
 #ifndef NDEBUG

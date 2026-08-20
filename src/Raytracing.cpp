@@ -7,6 +7,11 @@
 
 #include "ShaderUtils.h"
 
+// Microsoft Pix
+#include <filesystem>
+#include <shlobj.h>
+#include <KnownFolders.h>
+
 enum class RenderTarget
 {
 	kFrameBuffer = 0,
@@ -83,7 +88,7 @@ enum class DepthStencilTarget
 
 void Raytracing::LoadSettings()
 {
-	logger::info("[Frame Generation] Loading settings");
+	logger::info("[Raytracing] Loading settings");
 
 	CSimpleIniA ini;
 	ini.SetUnicode();
@@ -91,21 +96,314 @@ void Raytracing::LoadSettings()
 
 	settings.frameGenerationMode = ini.GetBoolValue("Settings", "bFrameGenerationMode", true);
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
+	settings.captureHotkey = static_cast<uint32_t>(ini.GetLongValue("Settings", "uCaptureHotkey", VK_F11));
 
-	logger::info("[Frame Generation] bFrameGenerationMode: {}", settings.frameGenerationMode);
-	logger::info("[Frame Generation] bFrameLimitMode: {}", settings.frameLimitMode);
+	logger::info("[Raytracing] bFrameGenerationMode: {}", settings.frameGenerationMode);
+	logger::info("[Raytracing] bFrameLimitMode: {}", settings.frameLimitMode);
+	logger::info("[Raytracing] uCaptureHotkey: 0x{:X}", settings.captureHotkey);
+}
+
+void Raytracing::InitializePIX()
+{
+	auto getLatestWinPixGpuCapturerPath = [] {
+		LPWSTR programFilesPath = nullptr;
+		SHGetKnownFolderPath(FOLDERID_ProgramFiles, KF_FLAG_DEFAULT, NULL, &programFilesPath);
+
+		std::filesystem::path pixInstallationPath = programFilesPath;
+		pixInstallationPath /= "Microsoft PIX";
+
+		std::wstring newestVersionFound;
+
+		for (auto const& directory_entry : std::filesystem::directory_iterator(pixInstallationPath)) {
+			if (directory_entry.is_directory()) {
+				if (newestVersionFound.empty() || newestVersionFound < directory_entry.path().filename().c_str()) {
+					newestVersionFound = directory_entry.path().filename().c_str();
+				}
+			}
+		}
+
+		if (newestVersionFound.empty()) {
+			logger::warn("[DX12Interop] PIX installation not found");
+		}
+
+		return std::wstring{ pixInstallationPath / newestVersionFound / L"WinPixGpuCapturer.dll" };
+	};
+
+	try {
+		auto module = GetModuleHandleW(L"WinPixGpuCapturer.dll");
+
+		// Check to see if a copy of WinPixGpuCapturer.dll has already been injected into the application.
+		// This may happen if the application is launched through the PIX UI.
+		if (module == 0) {
+			auto pixGPUCapturerPath = getLatestWinPixGpuCapturerPath();
+
+			if (pixGPUCapturerPath.empty()) {
+				logger::warn("[DX12Interop] PIX capture is enabled but binaries where not found.");
+				return;
+			}
+			else {
+				module = LoadLibraryW(pixGPUCapturerPath.c_str());
+
+				if (module == 0) {
+					logger::warn("[DX12Interop] Failed to load PIX from path.");
+					return;
+				}
+			}
+		}
+
+		DXGIGetDebugInterface1(0, IID_PPV_ARGS(&ga));
+
+		logger::info("[Raytracing] PIX Initialized");
+	}
+	catch (const std::exception& e) {
+		logger::error("[DX12Interop] Failed to load PIX with exception: {}", e.what());
+	}
+	catch (...) {
+		logger::error("[DX12Interop] Failed to load PIX with unknown exception.");
+	}
+}
+
+void Raytracing::CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d11Device, ID3D11DeviceContext* a_d3d11Context)
+{
+	const bool enableDebug = false;
+	if (enableDebug) {
+		winrt::com_ptr<ID3D12Debug3> debugController;
+		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
+			debugController->EnableDebugLayer();
+			debugController->SetEnableGPUBasedValidation(TRUE);
+		}
+		else {
+			logger::critical("[Raytracing] Debug layer creation failed");
+		}
+
+		winrt::com_ptr<ID3D12DeviceRemovedExtendedDataSettings1> pDredSettings;
+		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&pDredSettings)))) {
+			pDredSettings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+			pDredSettings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+		}
+	}
+	else {
+		InitializePIX();
+	}
+
+	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&d3d12Device)));
+
+	if (enableDebug) {
+		winrt::com_ptr<ID3D12InfoQueue> infoQueue;
+		if (SUCCEEDED(d3d12Device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
+			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_WARNING, FALSE);
+		}
+		else {
+			logger::critical("[Raytracing] Debug break creation failed");
+		}
+	}
+
+	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+	queueDesc.NodeMask = 0;
+	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
+
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&computeCommandQueue)));
+
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_COPY;
+	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&copyCommandQueue)));
+
+	DX::ThrowIfFailed(a_d3d11Device->QueryInterface(IID_PPV_ARGS(&d3d11Device)));
+	DX::ThrowIfFailed(a_d3d11Context->QueryInterface(IID_PPV_ARGS(&d3d11Context)));
+
+	// Create Interop
+	{
+		HANDLE sharedFenceHandle;
+		DX::ThrowIfFailed(d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&d3d12Fence)));
+		DX::ThrowIfFailed(d3d12Device->CreateSharedHandle(d3d12Fence.get(), nullptr, GENERIC_ALL, nullptr, &sharedFenceHandle));
+		DX::ThrowIfFailed(d3d11Device->OpenSharedFence(sharedFenceHandle, IID_PPV_ARGS(&d3d11Fence)));
+		CloseHandle(sharedFenceHandle);
+
+		fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		if (!fenceEvent)
+			DX::ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
+	}
+
+	InitializeCERaytracing(d3d11Device.get(), d3d12Device.get(), commandQueue.get(), computeCommandQueue.get(), copyCommandQueue.get());
+}
+
+void Raytracing::InitializeCERaytracing(ID3D11Device5* a_d3d11Device, ID3D12Device5* a_d3d12Device, ID3D12CommandQueue* a_commandQueue, ID3D12CommandQueue* a_computeCommandQueue, ID3D12CommandQueue* a_copyCommandQueue)
+{
+	if (forcedDisabled)
+		return;
+
+	if (initialized)
+		return;
+
+	logger::error("[Raytracing] Initializing Creation Engine Ray Tracing...");
+
+	bool result = creationEngineRaytracing->InitializeRenderer(a_d3d11Device, a_d3d12Device, a_commandQueue, a_computeCommandQueue, a_copyCommandQueue);
+
+	if (!result) {
+		//settings.CreationEngineRaytracingSettings.Enabled = false;
+		initialized = false;
+		forcedDisabled = true;
+		disableReason = DisableReason::InitFailed;
+
+		logger::error("[Raytracing] Failed to initialize Creation Engine Ray Tracing.");
+		return;
+	}
+
+	initialized = true;
+
+	logger::info("[Raytracing] Successfully initialized Creation Engine ray tracing.");
+
+	// Set Resolution
+	auto state = RE::BSGraphics::State::GetSingleton();
+	creationEngineRaytracing->SetResolution(state.screenWidth, state.screenHeight);
 }
 
 void Raytracing::PostPostLoad()
 {
+	creationEngineRaytracing = std::make_unique<CreationEngineRaytracing>();
+
 	highFPSPhysicsFixLoaded = GetModuleHandleA("Data\\F4SE\\Plugins\\HighFPSPhysicsFix.dll") != nullptr;
 
 	if (highFPSPhysicsFixLoaded)
-		logger::info("[Frame Generation] HighFPSPhysicsFix.dll is loaded");
+		logger::info("[Raytracing] HighFPSPhysicsFix.dll is loaded");
 	else
-		logger::info("[Frame Generation] HighFPSPhysicsFix.dll is not loaded");
+		logger::info("[Raytracing] HighFPSPhysicsFix.dll is not loaded");
 
 	Hooks::Install();
+}
+
+void Raytracing::ShareTexture(ID3D11Texture2D* d3d11Texture, ID3D12Resource** d3d12Resource, bool nt, uint accessFlags) const
+{
+	D3D11_TEXTURE2D_DESC desc;
+	d3d11Texture->GetDesc(&desc);
+
+	IDXGIResource1* dxgiResource;
+	DX::ThrowIfFailed(d3d11Texture->QueryInterface(IID_PPV_ARGS(&dxgiResource)));
+
+	HANDLE sharedHandle = nullptr;
+
+	if (nt)
+		DX::ThrowIfFailed(dxgiResource->CreateSharedHandle(nullptr, accessFlags, nullptr, &sharedHandle));
+	else
+		DX::ThrowIfFailed(dxgiResource->GetSharedHandle(&sharedHandle));
+
+	DX::ThrowIfFailed(d3d12Device->OpenSharedHandle(sharedHandle, IID_PPV_ARGS(d3d12Resource)));
+
+	// Only close handle if it was created here
+	if (nt)
+		CloseHandle(sharedHandle);
+}
+
+void Raytracing::SetupResources()
+{
+	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+
+	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
+	D3D11_TEXTURE2D_DESC mainDesc;
+	reinterpret_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+
+	// Create Samplers
+	{
+		D3D11_SAMPLER_DESC samplerDesc = {
+			.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+			.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP,
+			.MaxAnisotropy = 1,
+			.MinLOD = 0,
+			.MaxLOD = D3D11_FLOAT32_MAX
+		};
+		DX::ThrowIfFailed(d3d11Device->CreateSamplerState(&samplerDesc, samplerState.put()));
+	}
+
+	// Sky Hemisphere
+	{
+		auto& reflections = rendererData->cubeMapRenderTargets[0];
+
+		D3D11_TEXTURE2D_DESC desc;
+		reinterpret_cast<ID3D11Texture2D*>(reflections.texture)->GetDesc(&desc);
+		skyHemiSize = desc.Width * 2u;
+
+		D3D11_TEXTURE2D_DESC texDesc{};
+		texDesc.Width = skyHemiSize;
+		texDesc.Height = skyHemiSize;
+		texDesc.MipLevels = 1;
+		texDesc.ArraySize = 1;
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+		skyHemisphere = std::make_unique<WrappedResource>(texDesc, d3d11Device.get(), d3d12Device.get());
+		DX::ThrowIfFailed(skyHemisphere->resource->SetName(L"Sky Hemisphere"));
+
+		creationEngineRaytracing->SetSkyHemisphere(skyHemisphere->resource.get());
+	}
+
+	// Water FlowMap
+	{
+		D3D11_TEXTURE2D_DESC texDesc{};
+		texDesc.Width = 320;
+		texDesc.Height = 320;
+		texDesc.MipLevels = 1;
+		texDesc.ArraySize = 1;
+		texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+
+		waterFlowMap = std::make_unique<WrappedResource>(texDesc, d3d11Device.get(), d3d12Device.get());
+		DX::ThrowIfFailed(waterFlowMap->resource->SetName(L"Water FlowMap"));
+
+		creationEngineRaytracing->SetWaterFlowMap(waterFlowMap->resource.get());
+	}
+
+	// Gbuffer Textures
+	{
+		auto& albedo = rendererData->renderTargets[(uint)RenderTarget::kGbufferAlbedo];
+		ShareTexture(reinterpret_cast<ID3D11Texture2D*>(albedo.texture), albedoTexture.put());
+
+		auto& material = rendererData->renderTargets[(uint)RenderTarget::kGbufferMaterial];
+		ShareTexture(reinterpret_cast<ID3D11Texture2D*>(material.texture), gnmaoTexture.put());
+	}
+
+	{
+		D3D11_TEXTURE2D_DESC texDesc{};
+		texDesc.Width = mainDesc.Width;
+		texDesc.Height = mainDesc.Height;
+		texDesc.MipLevels = 1;
+		texDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+		texDesc.ArraySize = 1;
+		texDesc.SampleDesc.Count = 1;
+		texDesc.SampleDesc.Quality = 0;
+		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+
+		normalRoughnessTexture = std::make_unique<WrappedResource>(texDesc, d3d11Device.get(), d3d12Device.get());
+	}
+
+	auto& certSettings = settings.cert;
+	certSettings.Enabled = true;
+	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::Debug;
+	certSettings.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::None;
+	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
+
+	creationEngineRaytracing->Initialize(certSettings);
+
+	creationEngineRaytracing->SetSharedTextures(albedoTexture.get(), normalRoughnessTexture->resource.get(), gnmaoTexture.get());
+
+	CompileShaders();
+}
+
+void Raytracing::CompileShaders()
+{
+	const auto skyHemiSizeStr = std::to_string(skyHemiSize);
+	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(ShaderUtils::CompileShader(L"Data\\Shaders\\CubeToHemiCS.hlsl", { { "RESOLUTION", skyHemiSizeStr.c_str() } }, "cs_5_0")); rawPtr)
+		cubeToHemiCS.attach(rawPtr);
 }
 
 void Raytracing::CreateFrameGenerationResources()
@@ -232,8 +530,8 @@ void Raytracing::CreateFrameGenerationResources()
 		}
 	}
 
-	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", "cs_5_0");
-	generateSharedBuffersCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\GenerateSharedBuffersCS.hlsl", "cs_5_0");
+	copyDepthToSharedBufferCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\CopyDepthToSharedBufferCS.hlsl", {}, "cs_5_0");
+	generateSharedBuffersCS = (ID3D11ComputeShader*)ShaderUtils::CompileShader(L"Data\\F4SE\\Plugins\\FrameGeneration\\GenerateSharedBuffersCS.hlsl", {}, "cs_5_0");
 }
 
 void Raytracing::PreAlpha()
@@ -479,6 +777,71 @@ void Raytracing::PostDisplay()
 	auto dx12SwapChain = DX12SwapChain::GetSingleton();
 
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared[dx12SwapChain->frameIndex]->resource.get(), swapChainResource);
+}
+
+void Raytracing::PreOpaque()
+{
+	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+
+	// SkyCubeToHemi
+	{
+		context->CSSetShader(cubeToHemiCS.get(), nullptr, 0);
+
+		auto& reflections = rendererData->cubeMapRenderTargets[0];
+		ID3D11ShaderResourceView* srvs[] = {
+			reinterpret_cast<ID3D11ShaderResourceView*>(reflections.srView)
+		};
+
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		auto sampler = samplerState.get();
+		context->CSSetSamplers(0, 1, &sampler);
+
+		ID3D11UnorderedAccessView* uav = skyHemisphere->uav;
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+		uint dispatch = (uint)std::ceil(skyHemiSize / 8.0f);
+		context->Dispatch(dispatch, dispatch, 1);
+
+		uav = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+	}
+}
+
+void Raytracing::PostOpaque()
+{
+	logger::info("Raytracing::PostOpaque");
+
+	bool shouldCapture = false;
+	if (ga && settings.captureHotkey != 0) {
+		bool isKeyDown = (GetAsyncKeyState(settings.captureHotkey) & 0x8000) != 0;
+		if (isKeyDown && !wasCaptureHotkeyDown) {
+			shouldCapture = true;
+		}
+		wasCaptureHotkeyDown = isKeyDown;
+	}
+
+	if (shouldCapture) {
+		logger::info("[Raytracing] Starting PIX capture in PostOpaque...");
+		ga->BeginCapture();
+	}
+
+	// Wait for D3D11 to finish
+	DX::ThrowIfFailed(d3d11Context->Signal(d3d11Fence.get(), ++currentFenceValue));
+	DX::ThrowIfFailed(commandQueue->Wait(d3d12Fence.get(), currentFenceValue));
+
+	creationEngineRaytracing->Execute();
+	currentFrame = creationEngineRaytracing->PostExecution();
+
+	// Wait for D3D12 to finish
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
+	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), currentFenceValue));
+
+	if (shouldCapture) {
+		ga->EndCapture();
+		logger::info("[Raytracing] Ended PIX capture in PostOpaque.");
+	}
 }
 
 void Raytracing::Reset()

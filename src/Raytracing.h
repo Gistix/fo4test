@@ -4,6 +4,16 @@
 
 #include "SimpleIni.h"
 
+#include "CreationEngineRaytracing.h"
+#include "WrappedResource.h"
+
+// Microsoft PIX
+#pragma push_macro("NTDDI_VERSION")
+#undef NTDDI_VERSION
+#define NTDDI_VERSION NTDDI_WINBLUE
+#include <DXProgrammableCapture.h>
+#pragma pop_macro("NTDDI_VERSION")
+
 class Raytracing
 {
 public:
@@ -13,20 +23,28 @@ public:
 		return &singleton;
 	}
 
-	struct Settings
-	{
-		bool frameGenerationMode = 1;
-		bool frameLimitMode = 1;
-	};
-
-	Settings settings;
-
 	bool highFPSPhysicsFixLoaded = false;
 
 	bool d3d12Interop = false;
 	double refreshRate = 0.0f;
 
 	bool reticleFix = false;
+
+	winrt::com_ptr<ID3D11Device5> d3d11Device;
+	winrt::com_ptr<ID3D11DeviceContext4> d3d11Context;
+
+	winrt::com_ptr<ID3D12Device5> d3d12Device;
+	winrt::com_ptr<ID3D12CommandQueue> commandQueue;
+	winrt::com_ptr<ID3D12CommandQueue> computeCommandQueue;
+	winrt::com_ptr<ID3D12CommandQueue> copyCommandQueue;
+
+	UINT64 currentFenceValue = 0;
+	HANDLE fenceEvent = nullptr;
+
+	winrt::com_ptr<ID3D11Fence> d3d11Fence;
+	winrt::com_ptr<ID3D12Fence> d3d12Fence;
+
+	winrt::com_ptr<IDXGraphicsAnalysis> ga = nullptr;
 
 	Texture2D* HUDLessBufferShared[2];
 	Texture2D* depthBufferShared[2];
@@ -41,9 +59,54 @@ public:
 
 	bool setupBuffers = false;
 
+	std::unique_ptr<CreationEngineRaytracing> creationEngineRaytracing = nullptr;
+
+	bool initialized = false;
+
+	bool forcedDisabled = false;
+
+	enum DisableReason
+	{
+		None,
+		UnsupportedGPU,
+		OutdatedDrivers,
+		MissingPlugin,
+		InitFailed,
+	} disableReason = DisableReason::None;
+
+	uint32_t currentFrame;
+
+	winrt::com_ptr<ID3D11SamplerState> samplerState = nullptr;
+
+	uint32_t skyHemiSize;
+
+	std::unique_ptr<WrappedResource> skyHemisphere = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> cubeToHemiCS = nullptr;
+
+	winrt::com_ptr<ID3D12Resource> albedoTexture = nullptr;
+	std::unique_ptr<WrappedResource> normalRoughnessTexture = nullptr;
+	winrt::com_ptr<ID3D12Resource> gnmaoTexture = nullptr;
+
+	std::unique_ptr<WrappedResource> waterFlowMap = nullptr;
+
+	struct Settings {
+		bool frameGenerationMode = 1;
+		bool frameLimitMode = 1;
+		uint32_t captureHotkey = VK_F11;
+		CreationEngineRaytracing::Settings cert;
+	} settings;
+
+	bool wasCaptureHotkeyDown = false;
+
 	void LoadSettings();
 
 	void PostPostLoad();
+
+	void ShareTexture(ID3D11Texture2D* d3d11Texture, ID3D12Resource** d3d12Resource, bool nt = false, uint accessFlags = DXGI_SHARED_RESOURCE_READ) const;
+
+	void SetupResources();
+
+	void CompileShaders();
 
 	void CreateFrameGenerationResources();
 	void PreAlpha();
@@ -58,7 +121,15 @@ public:
 
 	static double GetRefreshRate(HWND a_window);
 
+	void InitializePIX();
+	void CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d11Device, ID3D11DeviceContext* a_d3d11Context);
+
+	void InitializeCERaytracing(ID3D11Device5* d3d11Device, ID3D12Device5* d3d12Device, ID3D12CommandQueue* commandQueue, ID3D12CommandQueue* computeCommandQueue, ID3D12CommandQueue* copyCommandQueue);
+
 	void PostDisplay();
+
+	void PreOpaque();
+	void PostOpaque();
 
 	void Reset();
 
@@ -87,14 +158,19 @@ public:
 		{
 			static void thunk(void* a1)
 			{
+				auto rt = Raytracing::GetSingleton();
+				rt->creationEngineRaytracing->UpdateCamera();
+
+				rt->PreOpaque();
+
 				func(a1);
 
-				auto rt = Raytracing::GetSingleton();
+				rt->PostOpaque();
 
-				if (!rt->reticleFix)
+				/*if (!rt->reticleFix)
 					rt->CopyBuffersToSharedResources();
 
-				rt->reticleFix = false;
+				rt->reticleFix = false;*/
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -112,54 +188,35 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct TES_AttachModel
+		struct BSShaderRenderTargets_Create
 		{
-			static void thunk(RE::TES* oThis, RE::TESObjectREFR* refr, RE::TESObjectCELL* cell, void* queuedTree, bool a5, RE::NiAVObject* a6)
+			static void thunk(void* shaderRenderTargets)
 			{
-				func(oThis, refr, cell, queuedTree, a5, a6);
-
-				auto* baseObject = refr->GetObjectReference();
-
-				//auto flags = baseObject->GetFormFlags();
-
-				auto type = baseObject->GetFormType();
-
-				auto logName = [&](const char* name) {
-					logger::info("[RT] TES::AttachModel - {} - {}", magic_enum::enum_name(type), name);
-				};
-
-				if (auto* model = baseObject->As<RE::TESModel>()) {
-					logName(model->GetModel());
-				}
-				else {
-					if (auto* actor = refr->As<RE::Actor>()) {
-						logName(actor->GetName());
-					}
-				}
-
+				func(shaderRenderTargets);
+				Raytracing::GetSingleton()->SetupResources();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
-
+		
 		static void Install()
 		{
 #if defined(FALLOUT_POST_NG)
-			stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
-			stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
-			stl::detour_thunk<DrawWorld_Forward>(REL::ID(2318315));
-			stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);
+			stl::detour_thunk<BSShaderRenderTargets_Create>(REL::ID(2318909));
 
-			stl::detour_thunk<TES_AttachModel>(REL::ID(2192085));
+			//stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
+			//stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
+			stl::detour_thunk<DrawWorld_Forward>(REL::ID(2318315));
+			//stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);
 #else
 			// Fix game initialising twice
-			stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
+			/*stl::detour_thunk<WindowSizeChanged>(REL::ID(212827));
 
 			// Watch frame presentation
 			stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(587723).address() + 0xE1);
 
 			// Fix reticles on motion vectors and depth
 			stl::detour_thunk<DrawWorld_Forward>(REL::ID(656535));
-			stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);
+			stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(338205).address() + 0x253);*/
 #endif
 
 			logger::info("[Raytracing] Installed hooks");

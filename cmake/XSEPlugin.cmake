@@ -89,14 +89,14 @@ if(CMAKE_GENERATOR MATCHES "Visual Studio")
 	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/ZI>")
 	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/Od>")
 	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:DEBUG>:/Gy>")
-	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<CONFIG:RELEASE>:${SC_RELEASE_OPTS}>")
+	target_compile_options(${PROJECT_NAME} PUBLIC "$<$<NOT:$<CONFIG:DEBUG>>:${SC_RELEASE_OPTS}>")
 
 	target_link_options(
 		${PROJECT_NAME}
 		PRIVATE
 		/WX
 		"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
-		"$<$<CONFIG:RELEASE>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
+		"$<$<NOT:$<CONFIG:DEBUG>>:/LTCG;/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
 	)
 endif()
 
