@@ -6,7 +6,24 @@ project(
 	LANGUAGES CXX
 )
 
+# Make INSTALL depend on ALL build targets (default, but force it explicitly)
+set(CMAKE_SKIP_INSTALL_ALL_DEPENDENCY OFF CACHE BOOL "" FORCE)
+
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
+
+set(DEPLOY_DIR $ENV{DEPLOY_DIR})
+
+# ########################################################################################################################
+# ## Build options
+# ########################################################################################################################
+message("Options:")
+
+option(
+    AUTO_DEPLOYMENT
+    "Copy the build output and addons to env:DEPLOY_DIR"
+    OFF
+)
+
 include(XSEPlugin)
 
 find_package(directxtk CONFIG REQUIRED)
@@ -32,3 +49,15 @@ target_link_libraries(
 	magic_enum::magic_enum
 	d3dcompiler.lib
 )
+
+if(AUTO_DEPLOYMENT)
+    message(STATUS "Auto deployment enabled. Build output and addons will be copied to ${DEPLOY_DIR}")
+
+    install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${DEPLOY_DIR}/${ScriptExtenderName}/Plugins)
+
+    install(FILES $<TARGET_PDB_FILE:${PROJECT_NAME}> DESTINATION ${DEPLOY_DIR}/${ScriptExtenderName}/Plugins OPTIONAL)
+
+    install(FILES $<TARGET_RUNTIME_DLLS:${PROJECT_NAME}> DESTINATION ${DEPLOY_DIR}/${ScriptExtenderName}/Plugins OPTIONAL)
+
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/package/ DESTINATION ${DEPLOY_DIR})
+endif()

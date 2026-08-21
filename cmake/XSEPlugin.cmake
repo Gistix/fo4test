@@ -116,6 +116,8 @@ elseif(BUILD_POST_AE)
 	set(CommonLibPath "extern/CommonLibF4PostAE/CommonLibF4")
 endif()	
 
+set(ScriptExtenderName "F4SE")
+
 add_subdirectory(${CommonLibPath} ${CommonLibName} EXCLUDE_FROM_ALL)
 
 target_include_directories(
