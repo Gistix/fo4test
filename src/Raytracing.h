@@ -83,6 +83,16 @@ public:
 	std::unique_ptr<WrappedResource> skyHemisphere = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> cubeToHemiCS = nullptr;
 
+	// Available when Pathtracing
+	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> depthTexture;
+	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> motionVectorsTexture;
+
+	// Available for both GI and PT
+	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> mainTexture;
+	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> diffuseAlbedoTexture;
+
+	winrt::com_ptr<ID3D11ComputeShader> copyPTMainCS = nullptr;
+
 	winrt::com_ptr<ID3D12Resource> albedoTexture = nullptr;
 	std::unique_ptr<WrappedResource> normalRoughnessTexture = nullptr;
 	winrt::com_ptr<ID3D12Resource> gnmaoTexture = nullptr;

@@ -303,9 +303,11 @@ void Raytracing::SetupResources()
 {
 	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 
-	auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
 	D3D11_TEXTURE2D_DESC mainDesc;
-	reinterpret_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+	{
+		auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
+		reinterpret_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+	}
 
 	// Create Samplers
 	{
@@ -340,9 +342,9 @@ void Raytracing::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
 
 		skyHemisphere = std::make_unique<WrappedResource>(texDesc, d3d11Device.get(), d3d12Device.get());
-		DX::ThrowIfFailed(skyHemisphere->resource->SetName(L"Sky Hemisphere"));
+		DX::ThrowIfFailed(skyHemisphere->GetResource()->SetName(L"Sky Hemisphere"));
 
-		creationEngineRaytracing->SetSkyHemisphere(skyHemisphere->resource.get());
+		creationEngineRaytracing->SetSkyHemisphere(skyHemisphere->GetResource());
 	}
 
 	// Water FlowMap
@@ -358,9 +360,9 @@ void Raytracing::SetupResources()
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
 
 		waterFlowMap = std::make_unique<WrappedResource>(texDesc, d3d11Device.get(), d3d12Device.get());
-		DX::ThrowIfFailed(waterFlowMap->resource->SetName(L"Water FlowMap"));
+		DX::ThrowIfFailed(waterFlowMap->GetResource()->SetName(L"Water FlowMap"));
 
-		creationEngineRaytracing->SetWaterFlowMap(waterFlowMap->resource.get());
+		creationEngineRaytracing->SetWaterFlowMap(waterFlowMap->GetResource());
 	}
 
 	// Gbuffer Textures
@@ -396,7 +398,23 @@ void Raytracing::SetupResources()
 
 	creationEngineRaytracing->Initialize(certSettings);
 
-	creationEngineRaytracing->SetSharedTextures(albedoTexture.get(), normalRoughnessTexture->resource.get(), gnmaoTexture.get());
+	creationEngineRaytracing->SetSharedTextures(albedoTexture.get(), normalRoughnessTexture->GetResource(), gnmaoTexture.get());
+
+	// Outputs from both PT and GI
+	{
+		CreationEngineRaytracing::SharedTexture depth[CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT];
+		CreationEngineRaytracing::SharedTexture motionVector[CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT];
+		CreationEngineRaytracing::SharedTexture main[CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT];
+		CreationEngineRaytracing::SharedTexture diffuseAlbedo[CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT];
+		creationEngineRaytracing->GetSharedTextures(depth, motionVector, main, diffuseAlbedo);
+
+		for (size_t i = 0; i < CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT; i++) {
+			depthTexture[i] = std::make_unique<WrappedResource>(depth[i].native, depth[i].shared, d3d11Device.get());
+			motionVectorsTexture[i] = std::make_unique<WrappedResource>(motionVector[i].native, motionVector[i].shared, d3d11Device.get());
+			mainTexture[i] = std::make_unique<WrappedResource>(main[i].native, main[i].shared, d3d11Device.get());
+			diffuseAlbedoTexture[i] = std::make_unique<WrappedResource>(diffuseAlbedo[i].native, diffuseAlbedo[i].shared, d3d11Device.get());
+		}
+	}
 
 	CompileShaders();
 }
@@ -406,6 +424,9 @@ void Raytracing::CompileShaders()
 	const auto skyHemiSizeStr = std::to_string(skyHemiSize);
 	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(ShaderUtils::CompileShader(L"Data\\Shaders\\CubeToHemiCS.hlsl", { { "RESOLUTION", skyHemiSizeStr.c_str() } }, "cs_5_0")); rawPtr)
 		cubeToHemiCS.attach(rawPtr);
+
+	if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(ShaderUtils::CompileShader(L"Data\\Shaders\\CopyPTMainCS.hlsl", {}, "cs_5_0")); rawPtr)
+		copyPTMainCS.attach(rawPtr);
 }
 
 void Raytracing::CreateFrameGenerationResources()
@@ -857,6 +878,35 @@ void Raytracing::PostRender()
 	// Wait for D3D12 to finish
 	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
 	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), currentFenceValue));
+
+	// Composite PT Main over Game Main
+	{
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
+
+		context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
+
+		ID3D11ShaderResourceView* srvs[] = { mainTexture[currentFrame]->srv };
+		context->CSSetShaderResources(0, 1, srvs);
+
+		auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
+		ID3D11UnorderedAccessView* uavs[] = { reinterpret_cast<ID3D11UnorderedAccessView*>(main.uaView) };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+
+		auto state = RE::BSGraphics::State::GetSingleton();
+		uint32_t dispatchX = (uint32_t)std::ceil(float(state.screenWidth) / 8.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(float(state.screenHeight) / 8.0f);
+
+		context->Dispatch(dispatchX, dispatchY, 1);
+
+		ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
+		context->CSSetShaderResources(0, 1, nullSRVs);
+
+		ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+	}
 
 	if (captureFrame > 1) {
 		ga->EndCapture();

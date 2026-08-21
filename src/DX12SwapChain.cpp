@@ -145,7 +145,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 
 	// Copy shared texture to swap chain buffer
 	{
-		auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->resource.get();
+		auto fakeSwapChain = swapChainBufferWrapped[frameIndex]->GetResource();
 		auto realSwapChain = swapChainBuffers[frameIndex].get();
 		{
 			std::vector<D3D12_RESOURCE_BARRIER> barriers;
