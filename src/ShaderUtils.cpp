@@ -44,7 +44,19 @@ ID3D11DeviceChild* ShaderUtils::CompileShader(const wchar_t* FilePath, const std
 	if (shaderErrors)
 		logger::debug("Shader logs:\n{}", static_cast<char*>(shaderErrors->GetBufferPointer()));
 
-	ID3D11ComputeShader* regShader;
-	DX::ThrowIfFailed(device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &regShader));
+	ID3D11DeviceChild* regShader = nullptr;
+	if (strncmp(ProgramType, "vs", 2) == 0) {
+		ID3D11VertexShader* vs = nullptr;
+		DX::ThrowIfFailed(device->CreateVertexShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &vs));
+		regShader = vs;
+	} else if (strncmp(ProgramType, "ps", 2) == 0) {
+		ID3D11PixelShader* ps = nullptr;
+		DX::ThrowIfFailed(device->CreatePixelShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &ps));
+		regShader = ps;
+	} else {
+		ID3D11ComputeShader* cs = nullptr;
+		DX::ThrowIfFailed(device->CreateComputeShader(shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize(), nullptr, &cs));
+		regShader = cs;
+	}
 	return regShader;
 }
