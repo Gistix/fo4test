@@ -12,80 +12,6 @@
 #include <shlobj.h>
 #include <KnownFolders.h>
 
-enum class RenderTarget
-{
-	kFrameBuffer = 0,
-
-	kRefractionNormal = 1,
-	
-	kMainPreAlpha = 2,
-	kMain = 3,
-	kMainTemp = 4,
-
-	kSSRRaw = 7,
-	kSSRBlurred = 8,
-	kSSRBlurredExtra = 9,
-
-	kMainVerticalBlur = 14,
-	kMainHorizontalBlur = 15,
-
-	kSSRDirection = 10,
-	kSSRMask = 11,
-
-	kUI = 17,
-	kUITemp = 18,
-
-	kGbufferNormal = 20,
-	kGbufferNormalSwap = 21,
-	kGbufferAlbedo = 22,
-	kGbufferEmissive = 23,
-	kGbufferMaterial = 24, //  Glossiness, Specular, Backlighting, SSS
-
-	kSSAO = 28,
-
-	kTAAAccumulation = 26,
-	kTAAAccumulationSwap = 27,
-
-	kMotionVectors = 29,
-
-	kUIDownscaled = 36,
-	kUIDownscaledComposite = 37,
-
-	kMainDepthMips = 39,
-
-	kUnkMask = 57,
-
-	kSSAOTemp = 48,
-	kSSAOTemp2 = 49,
-	kSSAOTemp3 = 50,
-
-	kDiffuseBuffer = 58,
-	kSpecularBuffer = 59,
-
-	kDownscaledHDR = 64,
-	kDownscaledHDRLuminance2 = 65,
-	kDownscaledHDRLuminance3 = 66,
-	kDownscaledHDRLuminance4 = 67,
-	kDownscaledHDRLuminance5Adaptation = 68,
-	kDownscaledHDRLuminance6AdaptationSwap = 69,
-	kDownscaledHDRLuminance6 = 70,
-
-	kCount = 101
-};
-
-enum class DepthStencilTarget
-{
-	kMainOtherOther = 0,
-	kMainOther = 1,
-	kMain = 2,
-	kMainCopy = 3,
-	kMainCopyCopy = 4,
-
-	kShadowMap = 8,
-
-	kCount = 13
-};
-
 void Raytracing::LoadSettings()
 {
 	logger::info("[Raytracing] Loading settings");
@@ -463,6 +389,26 @@ void Raytracing::SetupResources()
 			motionVectorsTexture[i] = std::make_unique<WrappedResource>(motionVector[i].native, motionVector[i].shared, d3d11Device.get());
 			mainTexture[i] = std::make_unique<WrappedResource>(main[i].native, main[i].shared, d3d11Device.get());
 			diffuseAlbedoTexture[i] = std::make_unique<WrappedResource>(diffuseAlbedo[i].native, diffuseAlbedo[i].shared, d3d11Device.get());
+		}
+
+		// Create UAV on kMainTemp
+		auto& target = rendererData->renderTargets[(uint)RenderTarget::kMainTemp];
+		if (target.texture) {
+			auto tex2D = reinterpret_cast<ID3D11Texture2D*>(target.texture);
+			D3D11_TEXTURE2D_DESC texDesc{};
+			tex2D->GetDesc(&texDesc);
+
+			D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+			uavDesc.Format = texDesc.Format;
+			uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+			uavDesc.Texture2D.MipSlice = 0;
+
+			HRESULT hr = d3d11Device->CreateUnorderedAccessView(tex2D, &uavDesc, mainTempUAV.put());
+			if (FAILED(hr)) {
+				logger::warn("[Raytracing] Failed to create UAV on kMainTemp (hr: 0x{:08X}). BindFlags: 0x{:X}", hr, texDesc.BindFlags);
+			} else {
+				logger::info("[Raytracing] Created UAV on kMainTemp successfully.");
+			}
 		}
 	}
 
@@ -950,28 +896,41 @@ void Raytracing::PostRender()
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 
-		context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
+		auto& target = rendererData->renderTargets[(uint)RenderTarget::kMainTemp];
+		ID3D11UnorderedAccessView* uav = mainTempUAV ? mainTempUAV.get() : reinterpret_cast<ID3D11UnorderedAccessView*>(target.uaView);
 
-		ID3D11ShaderResourceView* srvs[] = { mainTexture[currentFrame]->srv };
-		context->CSSetShaderResources(0, 1, srvs);
+		if (uav) {
+			winrt::com_ptr<ID3DUserDefinedAnnotation> annotation;
+			if (settings.enableRenderDoc && SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&annotation)))) {
+				annotation->BeginEvent(L"Path Tracing - Composite PT Main");
+			}
 
-		auto& main = rendererData->renderTargets[(uint)RenderTarget::kMain];
-		ID3D11UnorderedAccessView* uavs[] = { reinterpret_cast<ID3D11UnorderedAccessView*>(main.uaView) };
-		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+			context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
 
-		auto state = RE::BSGraphics::State::GetSingleton();
-		uint32_t dispatchX = (uint32_t)std::ceil(float(state.screenWidth) / 8.0f);
-		uint32_t dispatchY = (uint32_t)std::ceil(float(state.screenHeight) / 8.0f);
+			ID3D11ShaderResourceView* srvs[] = { mainTexture[currentFrame]->srv };
+			context->CSSetShaderResources(0, 1, srvs);
 
-		context->Dispatch(dispatchX, dispatchY, 1);
+			ID3D11UnorderedAccessView* uavs[] = { uav };
+			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-		ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
-		context->CSSetShaderResources(0, 1, nullSRVs);
+			auto state = RE::BSGraphics::State::GetSingleton();
+			uint32_t dispatchX = (uint32_t)std::ceil(float(state.screenWidth) / 8.0f);
+			uint32_t dispatchY = (uint32_t)std::ceil(float(state.screenHeight) / 8.0f);
 
-		ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
-		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+			context->Dispatch(dispatchX, dispatchY, 1);
 
-		context->CSSetShader(nullptr, nullptr, 0);
+			ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
+			context->CSSetShaderResources(0, 1, nullSRVs);
+
+			ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
+			context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+
+			context->CSSetShader(nullptr, nullptr, 0);
+
+			if (annotation) {
+				annotation->EndEvent();
+			}
+		}
 	}
 
 	if (capturingPix && pixCaptureFrame > 1) {
