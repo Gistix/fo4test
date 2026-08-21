@@ -58,6 +58,9 @@ WrappedResource::WrappedResource(D3D11_TEXTURE2D_DESC a_texDesc, ID3D11Device5* 
 WrappedResource::WrappedResource(ID3D12Resource* native, ID3D11Texture2D* shared, ID3D11Device5* a_d3d11Device) :
 	resourcePtr(native), resource11(shared)
 {
+	if (resource11) {
+		resource11->AddRef();
+	}
 
 	D3D11_TEXTURE2D_DESC desc{};
 	shared->GetDesc(&desc);
