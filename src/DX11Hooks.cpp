@@ -2,6 +2,7 @@
 
 #include <d3d11.h>
 #pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxguid.lib")
 
 #include "Raytracing.h"
 #include "DX12SwapChain.h"
@@ -138,6 +139,68 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChain(
 	return ret;
 }
 
+struct CreateRenderTargetHook
+{
+	template <class T>
+	static void SetD3D11DebugName(T* resource, const std::string& name)
+	{
+		if (resource && !name.empty()) {
+			auto child = reinterpret_cast<ID3D11DeviceChild*>(resource);
+			child->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(name.size()), name.c_str());
+		}
+	}
+
+	static uint32_t thunk(
+		RE::BSGraphics::Renderer* a_this,
+		uint32_t a_targetIndex,
+		const wchar_t* a_name,
+		const RE::BSGraphics::RenderTargetProperties* a_props)
+	{
+		uint32_t targetID = func(a_this, a_targetIndex, a_name, a_props);
+
+		if (Raytracing::GetSingleton()->settings.enableRenderDoc) {
+			if (a_this && targetID < 101) {
+				auto& rt = a_this->data.renderTargets[targetID];
+
+				std::string prefixStr;
+				if (a_name) {
+					int len = WideCharToMultiByte(CP_UTF8, 0, a_name, -1, nullptr, 0, nullptr, nullptr);
+					if (len > 1) {
+						prefixStr.resize(len - 1);
+						WideCharToMultiByte(CP_UTF8, 0, a_name, -1, &prefixStr[0], len, nullptr, nullptr);
+					}
+				}
+				if (prefixStr.empty()) {
+					prefixStr = "RT";
+				}
+
+				std::string name;
+				auto enumName = magic_enum::enum_name<RenderTarget>(static_cast<RenderTarget>(targetID));
+				if (!enumName.empty()) {
+					name = fmt::format("{}: {} [Slot {}] (EnumIndex {})", prefixStr, enumName, targetID, a_targetIndex);
+				}
+				else if (a_targetIndex != static_cast<uint32_t>(-1)) {
+					name = fmt::format("{}: Slot {} (EnumIndex {})", prefixStr, targetID, a_targetIndex);
+				}
+				else {
+					name = fmt::format("{}: Slot {} (Dynamic)", prefixStr, targetID);
+				}
+
+				SetD3D11DebugName(rt.texture, name);
+				SetD3D11DebugName(rt.copyTexture, name + " [Copy]");
+				SetD3D11DebugName(rt.rtView, name + " [RTV]");
+				SetD3D11DebugName(rt.srView, name + " [SRV]");
+				SetD3D11DebugName(rt.copySRView, name + " [Copy SRV]");
+				SetD3D11DebugName(rt.uaView, name + " [UAV]");
+			}
+		}
+
+		return targetID;
+	}
+
+	static inline decltype(&thunk) func = nullptr;
+};
+
 void DX11Hooks::Install()
 {
 	if (ENB_API::RequestENBAPI()) {
@@ -153,4 +216,6 @@ void DX11Hooks::Install()
 	uintptr_t moduleBase = (uintptr_t)GetModuleHandle(nullptr);
 
 	(uintptr_t&)ptrD3D11CreateDeviceAndSwapChain = Detours::IATHook(moduleBase, "d3d11.dll", "D3D11CreateDeviceAndSwapChain", (uintptr_t)hk_D3D11CreateDeviceAndSwapChain);
+
+	stl::detour_thunk<CreateRenderTargetHook>(REL::ID(2276996));
 }

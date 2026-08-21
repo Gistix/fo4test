@@ -16,6 +16,74 @@
 
 #include "renderdoc_app.h"
 
+enum class RenderTarget : uint32_t
+{
+	kFrameBuffer = 0,
+	kRefractionNormal = 1,
+	kMainPreAlpha = 2,
+	kMain = 3,
+	kMainTemp = 4,
+
+	kSSRRaw = 7,
+	kSSRBlurred = 8,
+	kSSRBlurredExtra = 9,
+	kSSRDirection = 10,
+	kSSRMask = 11,
+
+	kMainVerticalBlur = 14,
+	kMainHorizontalBlur = 15,
+
+	kUI = 17,
+	kUITemp = 18,
+
+	kGbufferNormal = 20,
+	kGbufferNormalSwap = 21,
+	kGbufferAlbedo = 22,
+	kGbufferEmissive = 23,
+	kGbufferMaterial = 24, // Glossiness, Specular, Backlighting, SSS
+
+	kTAAAccumulation = 26,
+	kTAAAccumulationSwap = 27,
+	kSSAO = 28,
+	kMotionVectors = 29,
+
+	kUIDownscaled = 36,
+	kUIDownscaledComposite = 37,
+
+	kMainDepthMips = 39,
+
+	kSSAOTemp = 48,
+	kSSAOTemp2 = 49,
+	kSSAOTemp3 = 50,
+
+	kUnkMask = 57,
+	kDiffuseBuffer = 58,
+	kSpecularBuffer = 59,
+
+	kDownscaledHDR = 64,
+	kDownscaledHDRLuminance2 = 65,
+	kDownscaledHDRLuminance3 = 66,
+	kDownscaledHDRLuminance4 = 67,
+	kDownscaledHDRLuminance5Adaptation = 68,
+	kDownscaledHDRLuminance6AdaptationSwap = 69,
+	kDownscaledHDRLuminance6 = 70,
+
+	kCount = 101
+};
+
+enum class DepthStencilTarget : uint32_t
+{
+	kMainOtherOther = 0,
+	kMainOther = 1,
+	kMain = 2,
+	kMainCopy = 3,
+	kMainCopyCopy = 4,
+
+	kShadowMap = 8,
+
+	kCount = 13
+};
+
 class Raytracing
 {
 public:
@@ -93,6 +161,7 @@ public:
 	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> diffuseAlbedoTexture;
 
 	winrt::com_ptr<ID3D11ComputeShader> copyPTMainCS = nullptr;
+	winrt::com_ptr<ID3D11UnorderedAccessView> mainTempUAV = nullptr;
 
 	winrt::com_ptr<ID3D12Resource> albedoTexture = nullptr;
 	std::unique_ptr<WrappedResource> normalRoughnessTexture = nullptr;
