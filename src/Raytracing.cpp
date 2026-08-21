@@ -98,9 +98,19 @@ void Raytracing::LoadSettings()
 	settings.frameLimitMode = ini.GetBoolValue("Settings", "bFrameLimitMode", true);
 	settings.captureHotkey = static_cast<uint32_t>(ini.GetLongValue("Settings", "uCaptureHotkey", VK_F11));
 
+	settings.enablePIX = ini.GetBoolValue("Settings", "bEnablePIX", true);
+	settings.enableRenderDoc = ini.GetBoolValue("Settings", "bEnableRenderDoc", false);
+
+	if (settings.enablePIX && settings.enableRenderDoc) {
+		logger::warn("[Raytracing] Both PIX and RenderDoc are enabled; disabling RenderDoc in favor of PIX.");
+		settings.enableRenderDoc = false;
+	}
+
 	logger::info("[Raytracing] bFrameGenerationMode: {}", settings.frameGenerationMode);
 	logger::info("[Raytracing] bFrameLimitMode: {}", settings.frameLimitMode);
 	logger::info("[Raytracing] uCaptureHotkey: 0x{:X}", settings.captureHotkey);
+	logger::info("[Raytracing] bEnablePIX: {}", settings.enablePIX);
+	logger::info("[Raytracing] bEnableRenderDoc: {}", settings.enableRenderDoc);
 }
 
 void Raytracing::InitializePIX()
@@ -160,6 +170,46 @@ void Raytracing::InitializePIX()
 	}
 	catch (...) {
 		logger::error("[DX12Interop] Failed to load PIX with unknown exception.");
+	}
+}
+
+void Raytracing::InitializeRenderDoc()
+{
+	try {
+		// Ensure RenderDoc skips D3D12 hooks to preserve native D3D12 interop
+		SetEnvironmentVariableA("RENDERDOC_HOOK_D3D12", "0");
+		SetEnvironmentVariableA("RENDERDOC_DISABLE_D3D12", "1");
+
+		HMODULE module = GetModuleHandleW(L"renderdoc.dll");
+
+		if (module == NULL) {
+			const wchar_t* rdocPluginPath = L"Data\\F4SE\\Plugins\\renderdoc.dll";
+			if (!std::filesystem::exists(rdocPluginPath)) {
+				logger::warn("[RenderDoc] renderdoc.dll not found at Data\\F4SE\\Plugins\\renderdoc.dll");
+				return;
+			}
+			module = LoadLibraryW(rdocPluginPath);
+			if (module == NULL) {
+				logger::warn("[RenderDoc] Failed to LoadLibrary Data\\F4SE\\Plugins\\renderdoc.dll (error code: {})", GetLastError());
+				return;
+			}
+		}
+
+		pRENDERDOC_GetAPI RENDERDOC_GetAPI = (pRENDERDOC_GetAPI)GetProcAddress(module, "RENDERDOC_GetAPI");
+		if (RENDERDOC_GetAPI) {
+			int ret = RENDERDOC_GetAPI(eRENDERDOC_API_Version_1_4_0, (void**)&rdocAPI);
+			if (ret == 1 && rdocAPI) {
+				logger::info("[Raytracing] RenderDoc API Initialized successfully from Data\\F4SE\\Plugins\\renderdoc.dll");
+			} else {
+				logger::warn("[Raytracing] RENDERDOC_GetAPI returned {}", ret);
+			}
+		} else {
+			logger::warn("[Raytracing] Failed to get RENDERDOC_GetAPI export from renderdoc.dll");
+		}
+	} catch (const std::exception& e) {
+		logger::error("[RenderDoc] Failed to initialize RenderDoc with exception: {}", e.what());
+	} catch (...) {
+		logger::error("[RenderDoc] Failed to initialize RenderDoc with unknown exception.");
 	}
 }
 
@@ -851,21 +901,37 @@ void Raytracing::PreRender()
 
 void Raytracing::PostRender()
 {
-	if (ga && settings.captureHotkey != 0) {
+	// Capture handling (only one of PIX or RenderDoc can be enabled)
+	if (settings.captureHotkey != 0) {
 		bool isKeyDown = (GetAsyncKeyState(settings.captureHotkey) & 0x8000) != 0;
 		if (isKeyDown && !wasCaptureHotkeyDown) {
-			capturing = true;
+			if (ga && settings.enablePIX) {
+				capturingPix = true;
+			}
+			else if (rdocAPI && settings.enableRenderDoc) {
+				capturingRdoc = true;
+			}
 		}
 		wasCaptureHotkeyDown = isKeyDown;
 	}
 
-	if (capturing) {
-		if (captureFrame == 0) {
+	if (capturingPix) {
+		if (pixCaptureFrame == 0) {
 			logger::info("[Raytracing] Starting PIX capture in PostOpaque...");
 			ga->BeginCapture();
 		}
 
-		captureFrame++;
+		pixCaptureFrame++;
+	}
+
+	if (capturingRdoc) {
+		if (rdocCaptureFrame == 0) {
+			logger::info("[Raytracing] Starting RenderDoc frame capture...");
+			auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+			rdocAPI->StartFrameCapture(rendererData->device, nullptr);
+		}
+
+		rdocCaptureFrame++;
 	}
 
 	// Wait for D3D11 to finish
@@ -908,11 +974,19 @@ void Raytracing::PostRender()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	if (captureFrame > 1) {
+	if (capturingPix && pixCaptureFrame > 1) {
 		ga->EndCapture();
 		logger::info("[Raytracing] Ended PIX capture in PostOpaque.");
-		captureFrame = 0;
-		capturing = false;
+		pixCaptureFrame = 0;
+		capturingPix = false;
+	}
+
+	if (capturingRdoc && rdocCaptureFrame > 1) {
+		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
+		rdocAPI->EndFrameCapture(rendererData->device, nullptr);
+		logger::info("[Raytracing] Ended RenderDoc frame capture.");
+		rdocCaptureFrame = 0;
+		capturingRdoc = false;
 	}
 }
 

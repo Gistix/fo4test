@@ -14,6 +14,8 @@
 #include <DXProgrammableCapture.h>
 #pragma pop_macro("NTDDI_VERSION")
 
+#include "renderdoc_app.h"
+
 class Raytracing
 {
 public:
@@ -38,11 +40,10 @@ public:
 	winrt::com_ptr<ID3D12CommandQueue> computeCommandQueue;
 	winrt::com_ptr<ID3D12CommandQueue> copyCommandQueue;
 
-	UINT64 currentFenceValue = 0;
-	HANDLE fenceEvent = nullptr;
-
 	winrt::com_ptr<ID3D11Fence> d3d11Fence;
 	winrt::com_ptr<ID3D12Fence> d3d12Fence;
+	uint64_t currentFenceValue = 0;
+	HANDLE fenceEvent = nullptr;
 
 	winrt::com_ptr<IDXGraphicsAnalysis> ga = nullptr;
 
@@ -103,12 +104,18 @@ public:
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
 		uint32_t captureHotkey = VK_F11;
+		bool enablePIX = 1;
+		bool enableRenderDoc = 0;
 		CreationEngineRaytracing::Settings cert;
 	} settings;
 
 	bool wasCaptureHotkeyDown = false;
-	bool capturing = false;
-	uint32_t captureFrame;
+	bool capturingPix = false;
+	uint32_t pixCaptureFrame = 0;
+
+	RENDERDOC_API_1_4_0* rdocAPI = nullptr;
+	bool capturingRdoc = false;
+	uint32_t rdocCaptureFrame = 0;
 
 	void LoadSettings();
 
@@ -134,6 +141,7 @@ public:
 	static double GetRefreshRate(HWND a_window);
 
 	void InitializePIX();
+	void InitializeRenderDoc();
 	void CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d11Device, ID3D11DeviceContext* a_d3d11Context);
 
 	void InitializeCERaytracing(ID3D11Device5* d3d11Device, ID3D12Device5* d3d12Device, ID3D12CommandQueue* commandQueue, ID3D12CommandQueue* computeCommandQueue, ID3D12CommandQueue* copyCommandQueue);

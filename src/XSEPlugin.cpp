@@ -82,9 +82,14 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Load(const F4SE::LoadInterface* a_f
 
 	InitializeLog();
 
-	DX11Hooks::Install();
+	auto raytracing = Raytracing::GetSingleton();
+	raytracing->LoadSettings();
 
-	Raytracing::GetSingleton()->LoadSettings();
+	if (raytracing->settings.enableRenderDoc) {
+		raytracing->InitializeRenderDoc();
+	}
+
+	DX11Hooks::Install();
 
 	auto messaging = F4SE::GetMessagingInterface();
 	messaging->RegisterListener(MessageHandler);
