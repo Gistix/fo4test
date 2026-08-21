@@ -97,6 +97,8 @@ public:
 	} settings;
 
 	bool wasCaptureHotkeyDown = false;
+	bool capturing = false;
+	uint32_t captureFrame;
 
 	void LoadSettings();
 
@@ -128,8 +130,10 @@ public:
 
 	void PostDisplay();
 
-	void PreOpaque();
-	void PostOpaque();
+	void PostRenderSetup();
+
+	void PreRender();
+	void PostRender();
 
 	void Reset();
 
@@ -154,23 +158,24 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct DrawWorld_Forward
+		struct DrawWorld_MainRenderSetup
 		{
-			static void thunk(void* a1)
+			static void thunk()
+			{
+				func();
+				Raytracing::GetSingleton()->PostRenderSetup();				
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct DrawWorld_NotifyDoneRendering
+		{
+			static void thunk()
 			{
 				auto rt = Raytracing::GetSingleton();
-				rt->creationEngineRaytracing->UpdateCamera();
-
-				rt->PreOpaque();
-
-				func(a1);
-
-				rt->PostOpaque();
-
-				/*if (!rt->reticleFix)
-					rt->CopyBuffersToSharedResources();
-
-				rt->reticleFix = false;*/
+				rt->PreRender();
+				func();
+				rt->PostRender();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -205,7 +210,8 @@ public:
 
 			//stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
 			//stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
-			stl::detour_thunk<DrawWorld_Forward>(REL::ID(2318315));
+			stl::detour_thunk<DrawWorld_MainRenderSetup>(REL::ID(2318298));
+			stl::write_thunk_call<DrawWorld_NotifyDoneRendering>(REL::ID(2228969).address() + 0x11C);
 			//stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);
 #else
 			// Fix game initialising twice

@@ -387,10 +387,12 @@ void Raytracing::SetupResources()
 	}
 
 	auto& certSettings = settings.cert;
+
 	certSettings.Enabled = true;
-	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::Debug;
-	certSettings.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::None;
+	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
+	certSettings.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::NRD_Reblur;
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
+	certSettings.DebugSettings.Markers = true;
 
 	creationEngineRaytracing->Initialize(certSettings);
 
@@ -779,7 +781,24 @@ void Raytracing::PostDisplay()
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared[dx12SwapChain->frameIndex]->resource.get(), swapChainResource);
 }
 
-void Raytracing::PreOpaque()
+void Raytracing::PostRenderSetup()
+{
+	static auto state = RE::BSGraphics::State::GetSingleton();
+	static auto renderTargetManager = RE::BSGraphics::RenderTargetManager::GetSingleton();
+
+	auto screenSize = float2(float(state.screenWidth), float(state.screenHeight));
+	auto renderSize = float2(screenSize.x * renderTargetManager.dynamicWidthRatio, screenSize.y * renderTargetManager.dynamicHeightRatio);
+
+	float2 jitter;
+	jitter.x = -state.offsetX * screenSize.x / 2.0f;
+	jitter.y = state.offsetY * screenSize.y / 2.0f;
+
+	creationEngineRaytracing->UpdateJitter(jitter / float2(renderTargetManager.dynamicWidthRatio, renderTargetManager.dynamicHeightRatio));
+
+	creationEngineRaytracing->UpdateCamera();
+}
+
+void Raytracing::PreRender()
 {
 	auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 	auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
@@ -809,22 +828,23 @@ void Raytracing::PreOpaque()
 	}
 }
 
-void Raytracing::PostOpaque()
+void Raytracing::PostRender()
 {
-	logger::info("Raytracing::PostOpaque");
-
-	bool shouldCapture = false;
 	if (ga && settings.captureHotkey != 0) {
 		bool isKeyDown = (GetAsyncKeyState(settings.captureHotkey) & 0x8000) != 0;
 		if (isKeyDown && !wasCaptureHotkeyDown) {
-			shouldCapture = true;
+			capturing = true;
 		}
 		wasCaptureHotkeyDown = isKeyDown;
 	}
 
-	if (shouldCapture) {
-		logger::info("[Raytracing] Starting PIX capture in PostOpaque...");
-		ga->BeginCapture();
+	if (capturing) {
+		if (captureFrame == 0) {
+			logger::info("[Raytracing] Starting PIX capture in PostOpaque...");
+			ga->BeginCapture();
+		}
+
+		captureFrame++;
 	}
 
 	// Wait for D3D11 to finish
@@ -838,9 +858,11 @@ void Raytracing::PostOpaque()
 	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
 	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), currentFenceValue));
 
-	if (shouldCapture) {
+	if (captureFrame > 1) {
 		ga->EndCapture();
 		logger::info("[Raytracing] Ended PIX capture in PostOpaque.");
+		captureFrame = 0;
+		capturing = false;
 	}
 }
 
