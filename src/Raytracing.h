@@ -16,6 +16,11 @@
 
 #include "renderdoc_app.h"
 
+#include "RE/Bethesda/Events.h"
+#include "RE/Bethesda/PlayerCharacter.h"
+#include "RE/TESWaterReflections.h"
+#include "RE/TESWaterSystem.h"
+
 enum class RenderTarget : uint32_t
 {
 	kFrameBuffer = 0,
@@ -152,6 +157,10 @@ public:
 	std::unique_ptr<WrappedResource> skyHemisphere = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> cubeToHemiCS = nullptr;
 
+	RE::NiPointer<RE::TESWaterReflections> waterReflections = nullptr;
+
+	std::unique_ptr<WrappedResource> waterFlowMap = nullptr;
+
 	// Available when Pathtracing
 	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> depthTexture;
 	std::array<std::unique_ptr<WrappedResource>, CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT> motionVectorsTexture;
@@ -167,9 +176,8 @@ public:
 	std::unique_ptr<WrappedResource> normalRoughnessTexture = nullptr;
 	winrt::com_ptr<ID3D12Resource> gnmaoTexture = nullptr;
 
-	std::unique_ptr<WrappedResource> waterFlowMap = nullptr;
-
 	struct Settings {
+		bool enabled = true;
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
 		uint32_t captureHotkey = VK_F11;
@@ -189,6 +197,8 @@ public:
 	void LoadSettings();
 
 	void PostPostLoad();
+
+	void GameLoaded();
 
 	void ShareTexture(ID3D11Texture2D* d3d11Texture, ID3D12Resource** d3d12Resource, bool nt = false, uint accessFlags = DXGI_SHARED_RESOURCE_READ) const;
 
@@ -223,6 +233,42 @@ public:
 	void PostRender();
 
 	void Reset();
+
+	class BGSActorCellEventHandler : public RE::BSTEventSink<RE::BGSActorCellEvent>
+	{
+	public:
+		virtual RE::BSEventNotifyControl ProcessEvent(const RE::BGSActorCellEvent& a_event, RE::BSTEventSource<RE::BGSActorCellEvent>*) override
+		{
+			if (a_event.flags.underlying() != static_cast<uint32_t>(RE::BGSActorCellEvent::CellFlag::kEnter))
+				return RE::BSEventNotifyControl::kContinue;
+
+			auto* tesWaterSystem = RE::TESWaterSystem::GetSingleton();
+
+			if (tesWaterSystem) {
+				if (tesWaterSystem->waterReflections.empty()) {
+					tesWaterSystem->waterReflections.push_back(Raytracing::GetSingleton()->waterReflections);
+				}
+
+				tesWaterSystem->Enable();
+			}
+
+			return RE::BSEventNotifyControl::kContinue;
+		}
+
+		static bool Register()
+		{
+			static BGSActorCellEventHandler singleton;
+
+			auto* player = RE::PlayerCharacter::GetSingleton();
+			if (player) {
+				static_cast<RE::BSTEventSource<RE::BGSActorCellEvent>*>(player)->RegisterSink(&singleton);
+				logger::info("Registered {}", typeid(singleton).name());
+				return true;
+			}
+
+			return false;
+		}
+	};
 
 	struct Hooks
 	{

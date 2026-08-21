@@ -243,14 +243,29 @@ void Raytracing::PostPostLoad()
 {
 	creationEngineRaytracing = std::make_unique<CreationEngineRaytracing>();
 
-	highFPSPhysicsFixLoaded = GetModuleHandleA("Data\\F4SE\\Plugins\\HighFPSPhysicsFix.dll") != nullptr;
+	if (!creationEngineRaytracing->handle) {
+		settings.enabled = false;
+		forcedDisabled = true;
+		disableReason = DisableReason::MissingPlugin;
+		return;
+	}
 
-	if (highFPSPhysicsFixLoaded)
-		logger::info("[Raytracing] HighFPSPhysicsFix.dll is loaded");
-	else
-		logger::info("[Raytracing] HighFPSPhysicsFix.dll is not loaded");
+	RE::GetINISetting("bReflectLODLand:Water")->SetBinary(false);
+	RE::GetINISetting("bReflectLODObjects:Water")->SetBinary(false);
+	RE::GetINISetting("bReflectLODTrees:Water")->SetBinary(false);
+	RE::GetINISetting("bReflectSky:Water")->SetBinary(true);
+	RE::GetINISetting("bUseWaterReflections:Water")->SetBinary(true);
+	RE::GetINISetting("bUseCubeMapReflections:Water")->SetBinary(true);
 
 	Hooks::Install();
+}
+
+void Raytracing::GameLoaded()
+{
+	if (forcedDisabled)
+		return;
+
+	BGSActorCellEventHandler::Register();
 }
 
 void Raytracing::ShareTexture(ID3D11Texture2D* d3d11Texture, ID3D12Resource** d3d12Resource, bool nt, uint accessFlags) const
@@ -321,6 +336,17 @@ void Raytracing::SetupResources()
 		DX::ThrowIfFailed(skyHemisphere->GetResource()->SetName(L"Sky Hemisphere"));
 
 		creationEngineRaytracing->SetSkyHemisphere(skyHemisphere->GetResource());
+
+		// Setup TESWaterReflections
+		{
+			waterReflections = RE::NiPointer<RE::TESWaterReflections>{ new RE::TESWaterReflections()};
+
+			waterReflections->flags.set(true, RE::TESWaterReflections::Flags::kDirty, RE::TESWaterReflections::Flags::kDynamicCubemap, RE::TESWaterReflections::Flags::kWorldOrigin);
+
+			for (uint i = 0; i < 6; i++) {
+				waterReflections->cubeMapSides[i] = RE::TESWaterReflections::CubeMapSide(i, 0.0f);
+			}
+		}
 	}
 
 	// Water FlowMap

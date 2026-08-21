@@ -57,12 +57,14 @@ extern "C" DLLEXPORT bool F4SEAPI F4SEPlugin_Query(const F4SE::QueryInterface*, 
 
 void MessageHandler(F4SE::MessagingInterface::Message* message)
 {
+	auto raytracing = Raytracing::GetSingleton();
 	switch (message->type) {
-	case F4SE::MessagingInterface::kPostPostLoad:
-		{
-			Raytracing::GetSingleton()->PostPostLoad();
+		case F4SE::MessagingInterface::kPostPostLoad:
+			raytracing->PostPostLoad();
 			break;
-		}
+		case F4SE::MessagingInterface::kGameLoaded:
+			raytracing->GameLoaded();
+			break;
 	}
 }
 
