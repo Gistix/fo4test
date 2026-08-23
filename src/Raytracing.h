@@ -7,6 +7,8 @@
 #include "CreationEngineRaytracing.h"
 #include "WrappedResource.h"
 
+#include <ngx/nvsdk_ngx_defs_dlssd.h>
+
 // Microsoft PIX
 #pragma push_macro("NTDDI_VERSION")
 #undef NTDDI_VERSION
@@ -92,6 +94,8 @@ enum class DepthStencilTarget : uint32_t
 class Raytracing
 {
 public:
+	~Raytracing();
+
 	static Raytracing* GetSingleton()
 	{
 		static Raytracing singleton;
@@ -116,6 +120,7 @@ public:
 	winrt::com_ptr<ID3D11Fence> d3d11Fence;
 	winrt::com_ptr<ID3D12Fence> d3d12Fence;
 	uint64_t currentFenceValue = 0;
+	uint64_t dlssCommandFenceValue = 0;
 	HANDLE fenceEvent = nullptr;
 
 	winrt::com_ptr<IDXGraphicsAnalysis> ga = nullptr;
@@ -131,11 +136,18 @@ public:
 	ID3D11ComputeShader* copyDepthToSharedBufferCS;
 	ID3D11ComputeShader* generateSharedBuffersCS;
 
+	winrt::com_ptr<ID3D12CommandAllocator> dlssCommandAllocator = nullptr;
+	winrt::com_ptr<ID3D12GraphicsCommandList> dlssCommandList = nullptr;
+
 	bool setupBuffers = false;
 
 	std::unique_ptr<CreationEngineRaytracing> creationEngineRaytracing = nullptr;
 
 	bool initialized = false;
+	bool dlssFeatureCreated = false;
+	bool dlssHistoryReset = true;
+	bool dlssLastEvaluationSucceeded = false;
+	uint32_t dlssOutputFrame = 0;
 
 	bool forcedDisabled = false;
 
@@ -181,8 +193,11 @@ public:
 		bool frameGenerationMode = 1;
 		bool frameLimitMode = 1;
 		uint32_t captureHotkey = VK_F11;
-		bool enablePIX = 1;
+		bool enableDebug = 0;
+		bool enableD3D12Debug = 0;
+		bool enablePIX = 0;
 		bool enableRenderDoc = 0;
+		NVSDK_NGX_RayReconstruction_Hint_Render_Preset dlssRRPreset = NVSDK_NGX_RayReconstruction_Hint_Render_Preset_D;
 		CreationEngineRaytracing::Settings cert;
 	} settings;
 
@@ -232,6 +247,8 @@ public:
 
 	void PreRender();
 	void PostRender();
+	void WaitForDLSSCommandList();
+	void EvaluateDLSSRR();
 
 	void Reset();
 

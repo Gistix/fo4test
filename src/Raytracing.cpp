@@ -6,11 +6,17 @@
 #include "DirectXMath.h"
 
 #include "ShaderUtils.h"
+#include "DLSSRR.h"
 
 // Microsoft Pix
 #include <filesystem>
 #include <shlobj.h>
 #include <KnownFolders.h>
+
+Raytracing::~Raytracing()
+{
+	DLSSRR::GetSingleton()->Shutdown();
+}
 
 void Raytracing::LoadSettings()
 {
@@ -26,6 +32,7 @@ void Raytracing::LoadSettings()
 
 	settings.enablePIX = ini.GetBoolValue("Settings", "bEnablePIX", true);
 	settings.enableRenderDoc = ini.GetBoolValue("Settings", "bEnableRenderDoc", false);
+	settings.enableD3D12Debug = ini.GetBoolValue("Settings", "bEnableD3D12Debug", false);
 
 	if (settings.enablePIX && settings.enableRenderDoc) {
 		logger::warn("[Raytracing] Both PIX and RenderDoc are enabled; disabling RenderDoc in favor of PIX.");
@@ -37,6 +44,42 @@ void Raytracing::LoadSettings()
 	logger::info("[Raytracing] uCaptureHotkey: 0x{:X}", settings.captureHotkey);
 	logger::info("[Raytracing] bEnablePIX: {}", settings.enablePIX);
 	logger::info("[Raytracing] bEnableRenderDoc: {}", settings.enableRenderDoc);
+	logger::info("[Raytracing] bEnableD3D12Debug: {}", settings.enableD3D12Debug);
+
+	CSimpleIniA rtIni;
+	rtIni.SetUnicode();
+	SI_Error rtLoadErr = rtIni.LoadFile("Data\\F4SE\\Plugins\\Raytracing.ini");
+	const char* denoiserStr = "NRD_Reblur";
+	if (rtLoadErr >= 0) {
+		denoiserStr = rtIni.GetValue("Settings", "sDenoiser", rtIni.GetValue("Raytracing", "sDenoiser", "NRD_Reblur"));
+	} else {
+		denoiserStr = ini.GetValue("Raytracing", "sDenoiser", ini.GetValue("Settings", "sDenoiser", "NRD_Reblur"));
+	}
+
+	if (_stricmp(denoiserStr, "DLSS_RR") == 0) {
+		settings.cert.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::DLSS_RR;
+	} else if (_stricmp(denoiserStr, "NRD_Relax") == 0) {
+		settings.cert.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::NRD_Relax;
+	} else if (_stricmp(denoiserStr, "Accumulation") == 0) {
+		settings.cert.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::Accumulation;
+	} else if (_stricmp(denoiserStr, "None") == 0) {
+		settings.cert.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::None;
+	} else {
+		settings.cert.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::NRD_Reblur;
+	}
+
+	const char* presetStr = rtIni.GetValue("Settings", "sDLSS_RR_Preset", "D");
+	if (_stricmp(presetStr, "E") == 0) {
+		settings.dlssRRPreset = NVSDK_NGX_RayReconstruction_Hint_Render_Preset_E;
+	} else if (_stricmp(presetStr, "F") == 0) {
+		settings.dlssRRPreset = NVSDK_NGX_RayReconstruction_Hint_Render_Preset_F;
+	} else {
+		settings.dlssRRPreset = NVSDK_NGX_RayReconstruction_Hint_Render_Preset_D;
+		presetStr = "D";
+	}
+
+	logger::info("[Raytracing] sDenoiser: {}", denoiserStr);
+	logger::info("[Raytracing] sDLSS_RR_Preset: {}", presetStr);
 }
 
 void Raytracing::InitializePIX()
@@ -141,12 +184,11 @@ void Raytracing::InitializeRenderDoc()
 
 void Raytracing::CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d11Device, ID3D11DeviceContext* a_d3d11Context)
 {
-	const bool enableDebug = false;
-	if (enableDebug) {
+	if (settings.enableD3D12Debug) {
 		winrt::com_ptr<ID3D12Debug3> debugController;
 		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)))) {
 			debugController->EnableDebugLayer();
-			debugController->SetEnableGPUBasedValidation(TRUE);
+			debugController->SetEnableGPUBasedValidation(FALSE);
 		}
 		else {
 			logger::critical("[Raytracing] Debug layer creation failed");
@@ -158,13 +200,13 @@ void Raytracing::CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d1
 			pDredSettings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
 		}
 	}
-	else {
+	else if (settings.enablePIX){
 		InitializePIX();
 	}
 
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&d3d12Device)));
 
-	if (enableDebug) {
+	if (settings.enableD3D12Debug) {
 		winrt::com_ptr<ID3D12InfoQueue> infoQueue;
 		if (SUCCEEDED(d3d12Device->QueryInterface(IID_PPV_ARGS(&infoQueue)))) {
 			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
@@ -204,6 +246,12 @@ void Raytracing::CreateD3D12Device(IDXGIAdapter* a_adapter, ID3D11Device* a_d3d1
 		if (!fenceEvent)
 			DX::ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()));
 	}
+
+	DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&dlssCommandAllocator)));
+	DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, dlssCommandAllocator.get(), nullptr, IID_PPV_ARGS(&dlssCommandList)));
+	dlssCommandList->Close();
+
+	DLSSRR::GetSingleton()->Initialize(d3d12Device.get());
 
 	InitializeCERaytracing(d3d11Device.get(), d3d12Device.get(), commandQueue.get(), computeCommandQueue.get(), copyCommandQueue.get());
 }
@@ -394,12 +442,31 @@ void Raytracing::SetupResources()
 
 	certSettings.Enabled = true;
 	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
-	certSettings.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::NRD_Reblur;
-	certSettings.GeneralSettings.ShadowDenoiser = CreationEngineRaytracing::ShadowDenoiser::NRD_Sigma;
+	certSettings.GeneralSettings.ShadowDenoiser = CreationEngineRaytracing::ShadowDenoiser::None;
+
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
 	certSettings.DebugSettings.Markers = true;
 
 	creationEngineRaytracing->Initialize(certSettings);
+
+	dlssFeatureCreated = false;
+	dlssHistoryReset = true;
+	dlssLastEvaluationSucceeded = false;
+	if (certSettings.GeneralSettings.Denoiser == CreationEngineRaytracing::Denoiser::DLSS_RR && dlssCommandAllocator && dlssCommandList) {
+		WaitForDLSSCommandList();
+		dlssCommandAllocator->Reset();
+		dlssCommandList->Reset(dlssCommandAllocator.get(), nullptr);
+		dlssFeatureCreated = DLSSRR::GetSingleton()->CreateFeature(dlssCommandList.get(), mainDesc.Width, mainDesc.Height, mainDesc.Width, mainDesc.Height, settings.dlssRRPreset);
+		if (!dlssFeatureCreated) {
+			logger::warn("[Raytracing] DLSS-RR feature creation failed; RR evaluation will be skipped");
+		}
+		if (SUCCEEDED(dlssCommandList->Close())) {
+			ID3D12CommandList* ppCommandLists[] = { dlssCommandList.get() };
+			commandQueue->ExecuteCommandLists(1, ppCommandLists);
+			DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
+			dlssCommandFenceValue = currentFenceValue;
+		}
+	}
 
 	creationEngineRaytracing->SetSharedTextures(albedoTexture.get(), normalRoughnessTexture->GetResource(), gnmaoTexture.get());
 
@@ -957,6 +1024,10 @@ void Raytracing::PostRender()
 	creationEngineRaytracing->Execute();
 	currentFrame = creationEngineRaytracing->PostExecution();
 
+	if (settings.cert.GeneralSettings.Denoiser == CreationEngineRaytracing::Denoiser::DLSS_RR && dlssFeatureCreated) {
+		EvaluateDLSSRR();
+	}
+
 	// Wait for D3D12 to finish
 	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
 	DX::ThrowIfFailed(d3d11Context->Wait(d3d11Fence.get(), currentFenceValue));
@@ -977,7 +1048,8 @@ void Raytracing::PostRender()
 
 			context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
 
-			ID3D11ShaderResourceView* srvs[] = { mainTexture[currentFrame]->srv };
+			const uint32_t compositeFrame = dlssLastEvaluationSucceeded ? dlssOutputFrame : currentFrame;
+			ID3D11ShaderResourceView* srvs[] = { mainTexture[compositeFrame]->srv };
 			context->CSSetShaderResources(0, 1, srvs);
 
 			ID3D11UnorderedAccessView* uavs[] = { uav };
@@ -1036,4 +1108,89 @@ void Raytracing::Reset()
 	context->ClearRenderTargetView(HUDLessBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(depthBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
 	context->ClearRenderTargetView(motionVectorBufferShared[dx12SwapChain->frameIndex]->rtv.get(), clearColor);
+}
+
+void Raytracing::WaitForDLSSCommandList()
+{
+	if (!d3d12Fence || dlssCommandFenceValue == 0 || d3d12Fence->GetCompletedValue() >= dlssCommandFenceValue)
+		return;
+
+	DX::ThrowIfFailed(d3d12Fence->SetEventOnCompletion(dlssCommandFenceValue, fenceEvent));
+	WaitForSingleObject(fenceEvent, INFINITE);
+}
+
+void Raytracing::EvaluateDLSSRR()
+{
+	if (settings.cert.GeneralSettings.Denoiser != CreationEngineRaytracing::Denoiser::DLSS_RR)
+		return;
+
+	ID3D12Resource* specularAlbedo = nullptr;
+	ID3D12Resource* specularHitDistance = nullptr;
+	if (creationEngineRaytracing && creationEngineRaytracing->GetRRInput) {
+		creationEngineRaytracing->GetRRInput(specularAlbedo, specularHitDistance);
+	}
+
+	if (!dlssCommandAllocator || !dlssCommandList)
+		return;
+
+	WaitForDLSSCommandList();
+	dlssCommandAllocator->Reset();
+	dlssCommandList->Reset(dlssCommandAllocator.get(), nullptr);
+
+	auto state = State_GetSingleton();
+	auto renderTargetManager = RE::BSGraphics::RenderTargetManager::GetSingleton();
+
+	auto screenSize = float2(float(state->screenWidth), float(state->screenHeight));
+	float2 rawJitter;
+	rawJitter.x = -state->offsetX * screenSize.x / 2.0f;
+	rawJitter.y = state->offsetY * screenSize.y / 2.0f;
+
+	float2 jitter;
+	jitter.x = rawJitter.x / renderTargetManager.dynamicWidthRatio;
+	jitter.y = rawJitter.y / renderTargetManager.dynamicHeightRatio;
+
+	NVSDK_NGX_D3D12_DLSSD_Eval_Params evalParams{};
+	evalParams.pInDiffuseAlbedo = diffuseAlbedoTexture[currentFrame]->GetResource();
+	evalParams.pInSpecularAlbedo = specularAlbedo;
+	evalParams.pInNormals = normalRoughnessTexture->GetResource();
+	evalParams.pInRoughness = normalRoughnessTexture->GetResource();
+
+	evalParams.pInColor = mainTexture[currentFrame]->GetResource();
+	dlssOutputFrame = (currentFrame + 1) % CreationEngineRaytracing::MAX_FRAMES_IN_FLIGHT;
+	evalParams.pInOutput = mainTexture[dlssOutputFrame]->GetResource();
+	evalParams.pInDepth = depthTexture[currentFrame]->GetResource();
+	evalParams.pInMotionVectors = motionVectorsTexture[currentFrame]->GetResource();
+
+	evalParams.pInSpecularHitDistance = specularHitDistance;
+
+	evalParams.InJitterOffsetX = -jitter.x;
+	evalParams.InJitterOffsetY = -jitter.y;
+
+	evalParams.InRenderSubrectDimensions = {
+		DLSSRR::GetSingleton()->renderWidth,
+		DLSSRR::GetSingleton()->renderHeight
+	};
+	// Motion vectors are normalized/UV-space; Streamline applies the render
+	// dimensions as the effective motion-vector scale.
+	evalParams.InMVScaleX = static_cast<float>(DLSSRR::GetSingleton()->renderWidth);
+	evalParams.InMVScaleY = static_cast<float>(DLSSRR::GetSingleton()->renderHeight);
+	evalParams.InReset = dlssHistoryReset ? 1 : 0;
+	evalParams.InExposureScale = 1.0f;
+
+	const bool evaluated = DLSSRR::GetSingleton()->Evaluate(dlssCommandList.get(), evalParams);
+	dlssLastEvaluationSucceeded = false;
+
+	if (FAILED(dlssCommandList->Close())) {
+		logger::warn("[DLSS-RR] Failed to close evaluation command list");
+		return;
+	}
+	if (!evaluated) {
+		return;
+	}
+	dlssHistoryReset = false;
+	dlssLastEvaluationSucceeded = true;
+	ID3D12CommandList* ppCommandLists[] = { dlssCommandList.get() };
+	commandQueue->ExecuteCommandLists(1, ppCommandLists);
+	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), ++currentFenceValue));
+	dlssCommandFenceValue = currentFenceValue;
 }

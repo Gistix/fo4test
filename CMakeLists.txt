@@ -31,10 +31,26 @@ find_package(directxtex CONFIG REQUIRED)
 find_package(directx-headers CONFIG REQUIRED)
 find_package(magic_enum CONFIG REQUIRED)
 
+set(NGX_SDK_ROOT "" CACHE PATH
+	"Root directory of the externally provided NVIDIA NGX SDK")
+
+find_path(NGX_SDK_INCLUDE_DIR
+	nvsdk_ngx.h
+	HINTS "${NGX_SDK_ROOT}/include"
+	REQUIRED
+)
+
+find_library(NGX_SDK_LIBRARY
+	NAMES nvsdk_ngx_d
+	HINTS "${NGX_SDK_ROOT}/lib/Windows_x86_64"
+	REQUIRED
+)
+
 target_include_directories(
 	"${PROJECT_NAME}"
 	PRIVATE
 	${SIMPLEINI_INCLUDE_DIRS}
+	${NGX_SDK_INCLUDE_DIR}
 )
 
 target_link_libraries(
@@ -48,9 +64,10 @@ target_link_libraries(
 	d3d12.lib
 	magic_enum::magic_enum
 	d3dcompiler.lib
+	${NGX_SDK_LIBRARY}
 )
 
-if(AUTO_DEPLOYMENT)
+if(AUTO_DEPLOYMENT AND DEPLOY_DIR)
     message(STATUS "Auto deployment enabled. Build output and addons will be copied to ${DEPLOY_DIR}")
 
     install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${DEPLOY_DIR}/${ScriptExtenderName}/Plugins)
