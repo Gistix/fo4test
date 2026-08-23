@@ -442,8 +442,6 @@ void Raytracing::SetupResources()
 
 	certSettings.Enabled = true;
 	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
-	certSettings.GeneralSettings.ShadowDenoiser = CreationEngineRaytracing::ShadowDenoiser::None;
-
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
 	certSettings.DebugSettings.Markers = true;
 
