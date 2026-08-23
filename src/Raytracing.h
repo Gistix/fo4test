@@ -227,6 +227,7 @@ public:
 
 	void PostDisplay();
 
+	void PreRenderSetup();
 	void PostRenderSetup();
 
 	void PreRender();
@@ -294,9 +295,11 @@ public:
 		struct DrawWorld_MainRenderSetup
 		{
 			static void thunk()
-			{
+			{			
+				auto rt = Raytracing::GetSingleton();
+				rt->PreRenderSetup();
 				func();
-				Raytracing::GetSingleton()->PostRenderSetup();				
+				rt->PostRenderSetup();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};

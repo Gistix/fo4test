@@ -395,6 +395,7 @@ void Raytracing::SetupResources()
 	certSettings.Enabled = true;
 	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
 	certSettings.GeneralSettings.Denoiser = CreationEngineRaytracing::Denoiser::NRD_Reblur;
+	certSettings.GeneralSettings.ShadowDenoiser = CreationEngineRaytracing::ShadowDenoiser::NRD_Sigma;
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
 	certSettings.DebugSettings.Markers = true;
 
@@ -824,19 +825,62 @@ void Raytracing::PostDisplay()
 	reinterpret_cast<ID3D11DeviceContext*>(rendererData->context)->CopyResource(HUDLessBufferShared[dx12SwapChain->frameIndex]->resource.get(), swapChainResource);
 }
 
+[[nodiscard]] static RE::BSGraphics::State* State_GetSingleton()
+{
+#if defined(FALLOUT_POST_NG)
+	REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(2704621) };
+#else
+	REL::Relocation<RE::BSGraphics::State*> singleton{ REL::ID(600795) };
+#endif
+	return singleton.get();
+}
+
+void Raytracing::PreRenderSetup()
+{
+	static const float2 kHalton8[8] = {
+		{  0.0f,    -1.0f / 3.0f }, // Phase 0
+		{ -0.5f,     1.0f / 3.0f }, // Phase 1
+		{  0.5f,    -7.0f / 9.0f }, // Phase 2
+		{ -0.75f,   -1.0f / 9.0f }, // Phase 3
+		{  0.25f,    5.0f / 9.0f }, // Phase 4
+		{ -0.25f,   -5.0f / 9.0f }, // Phase 5
+		{  0.75f,    1.0f / 9.0f }, // Phase 6
+		{ -0.875f,   7.0f / 9.0f }  // Phase 7
+	};
+
+	auto state = State_GetSingleton();
+
+	bool isTAAActive = (state->taaDisableCounter == 1) && (state->trijuiceState == 0);
+	if (!isTAAActive) {
+		uint32_t phase = state->frameCount & 7;
+		float2 subpixel = kHalton8[phase];
+
+		state->currentFrame = phase;
+		state->offsetX = subpixel.x / static_cast<float>(state->screenWidth);
+		state->offsetY = subpixel.y / static_cast<float>(state->screenHeight);
+
+		// Ensure engine builds jittered matrices in cameraDataCache even if game TAA was off
+		state->taaDisableCounter = 1;
+	}
+}
+
 void Raytracing::PostRenderSetup()
 {
-	static auto state = RE::BSGraphics::State::GetSingleton();
+	static auto state = State_GetSingleton();
 	static auto renderTargetManager = RE::BSGraphics::RenderTargetManager::GetSingleton();
 
-	auto screenSize = float2(float(state.screenWidth), float(state.screenHeight));
+	auto screenSize = float2(float(state->screenWidth), float(state->screenHeight));
 	auto renderSize = float2(screenSize.x * renderTargetManager.dynamicWidthRatio, screenSize.y * renderTargetManager.dynamicHeightRatio);
 
-	float2 jitter;
-	jitter.x = -state.offsetX * screenSize.x / 2.0f;
-	jitter.y = state.offsetY * screenSize.y / 2.0f;
+	float2 rawJitter;
+	rawJitter.x = -state->offsetX * screenSize.x / 2.0f;
+	rawJitter.y = state->offsetY * screenSize.y / 2.0f;
 
-	creationEngineRaytracing->UpdateJitter(jitter / float2(renderTargetManager.dynamicWidthRatio, renderTargetManager.dynamicHeightRatio));
+	float2 jitter;
+	jitter.x = rawJitter.x / renderTargetManager.dynamicWidthRatio;
+	jitter.y = rawJitter.y / renderTargetManager.dynamicHeightRatio;
+
+	creationEngineRaytracing->UpdateJitter(jitter);
 
 	creationEngineRaytracing->UpdateCamera();
 }
@@ -939,9 +983,9 @@ void Raytracing::PostRender()
 			ID3D11UnorderedAccessView* uavs[] = { uav };
 			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-			auto state = RE::BSGraphics::State::GetSingleton();
-			uint32_t dispatchX = (uint32_t)std::ceil(float(state.screenWidth) / 8.0f);
-			uint32_t dispatchY = (uint32_t)std::ceil(float(state.screenHeight) / 8.0f);
+			auto state = State_GetSingleton();
+			uint32_t dispatchX = (uint32_t)std::ceil(float(state->screenWidth) / 8.0f);
+			uint32_t dispatchY = (uint32_t)std::ceil(float(state->screenHeight) / 8.0f);
 
 			context->Dispatch(dispatchX, dispatchY, 1);
 

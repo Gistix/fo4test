@@ -32,9 +32,16 @@ struct CreationEngineRaytracing
 		Accumulation
 	};
 
+	enum class ShadowDenoiser
+	{
+		None,
+		NRD_Sigma
+	};
+
 	struct GeneralSettings
 	{
 		Denoiser Denoiser = Denoiser::None;
+		ShadowDenoiser ShadowDenoiser = ShadowDenoiser::None;
 		Mode Mode = Mode::GlobalIllumination;
 		bool RaytracedShadows = false;
 
@@ -80,13 +87,13 @@ struct CreationEngineRaytracing
 		float minHitDistanceWeight = 0.1f;
 
 		// (normalized %) - base fraction of diffuse or specular lobe angle used to drive normal based rejection
-		float lobeAngleFraction = 0.15f;
+		float lobeAngleFraction = 0.5f;
 
 		// (normalized %) - base fraction of center roughness used to drive roughness based rejection
 		float roughnessFraction = 0.15f;
 
 		// Helps to mitigate fireflies emphasized by DLSS. Very cheap and unbiased in most of the cases, better keep in enabled to maximize quality
-		bool enableAntiFirefly = true;
+		bool enableAntiFirefly = false;
 
 		bool operator==(const NRDSettings&) const = default;
 	};
@@ -141,8 +148,8 @@ struct CreationEngineRaytracing
 	struct NRDRelaxSettings
 	{
 		// [0; RELAX_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames
-		uint32_t diffuseMaxAccumulatedFrameNum = 30;
-		uint32_t specularMaxAccumulatedFrameNum = 30;
+		uint32_t diffuseMaxAccumulatedFrameNum = 63;
+		uint32_t specularMaxAccumulatedFrameNum = 63;
 
 		// [0; maxAccumulatedFrameNum) - maximum number of linearly accumulated frames for fast history
 		// Values ">= maxAccumulatedFrameNum" disable fast history
@@ -169,6 +176,17 @@ struct CreationEngineRaytracing
 		bool enableRoughnessEdgeStopping = true;
 
 		bool operator==(const NRDRelaxSettings&) const = default;
+	};
+
+	struct NRDSigmaSettings
+	{
+		// (normalized %) - represents maximum allowed deviation from the local tangent plane
+		float planeDistanceSensitivity = 0.02f;
+
+		// [0; SIGMA_MAX_HISTORY_FRAME_NUM] - maximum number of linearly accumulated frames (0 disables stabilization)
+		uint32_t maxStabilizedFrameNum = 5;
+
+		bool operator==(const NRDSigmaSettings&) const = default;
 	};
 
 	struct MaterialSettings
@@ -365,6 +383,7 @@ struct CreationEngineRaytracing
 		NRDSettings NRDSettings;
 		NRDReblurSettings NRDReblurSettings;
 		NRDRelaxSettings NRDRelaxSettings;
+		NRDSigmaSettings NRDSigmaSettings;
 		MaterialSettings MaterialSettings;
 		SHaRCSettings SHaRCSettings;
 		AdvancedSettings AdvancedSettings;
