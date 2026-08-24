@@ -1,6 +1,8 @@
 #include "Raytracing.h"
 
 #include <d3dcompiler.h>
+#include <algorithm>
+#include <cmath>
 
 #include "DX12SwapChain.h"
 #include "DirectXMath.h"
@@ -442,6 +444,13 @@ void Raytracing::SetupResources()
 
 	certSettings.Enabled = true;
 	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
+
+	certSettings.LightingSettings.Directional = 1.0f;
+	certSettings.LightingSettings.Point = 1.0f;
+	certSettings.LightingSettings.Emissive = 1.0f;
+	certSettings.LightingSettings.Effect = 1.0f;
+	certSettings.LightingSettings.Sky = 1.0f;
+
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
 	certSettings.DebugSettings.Markers = true;
 
@@ -900,27 +909,52 @@ void Raytracing::PostDisplay()
 	return singleton.get();
 }
 
+static int32_t GetJitterPhaseCount(int32_t renderWidth, int32_t displayWidth)
+{
+	const float basePhaseCount = 8.0f;
+	return std::max(1, static_cast<int32_t>(basePhaseCount * std::pow(static_cast<float>(displayWidth) / renderWidth, 2.0f)));
+}
+
+static float Halton(int32_t index, int32_t base)
+{
+	float f = 1.0f;
+	float result = 0.0f;
+
+	for (int32_t currentIndex = index; currentIndex > 0;) {
+		f /= static_cast<float>(base);
+		result += f * static_cast<float>(currentIndex % base);
+		currentIndex = static_cast<int32_t>(std::floor(static_cast<float>(currentIndex) / base));
+	}
+
+	return result;
+}
+
+static float2 GetJitterOffset(int32_t index, int32_t phaseCount)
+{
+	return {
+		Halton((index % phaseCount) + 1, 2) - 0.5f,
+		Halton((index % phaseCount) + 1, 3) - 0.5f
+	};
+}
+
 void Raytracing::PreRenderSetup()
 {
-	static const float2 kHalton8[8] = {
-		{  0.0f,    -1.0f / 3.0f }, // Phase 0
-		{ -0.5f,     1.0f / 3.0f }, // Phase 1
-		{  0.5f,    -7.0f / 9.0f }, // Phase 2
-		{ -0.75f,   -1.0f / 9.0f }, // Phase 3
-		{  0.25f,    5.0f / 9.0f }, // Phase 4
-		{ -0.25f,   -5.0f / 9.0f }, // Phase 5
-		{  0.75f,    1.0f / 9.0f }, // Phase 6
-		{ -0.875f,   7.0f / 9.0f }  // Phase 7
-	};
-
 	auto state = State_GetSingleton();
 
 	bool isTAAActive = (state->taaDisableCounter == 1) && (state->trijuiceState == 0);
 	if (!isTAAActive) {
-		uint32_t phase = state->frameCount & 7;
-		float2 subpixel = kHalton8[phase];
+		auto renderTargetManager = RE::BSGraphics::RenderTargetManager::GetSingleton();
+		const int32_t displayWidth = static_cast<int32_t>(state->screenWidth);
+		const int32_t renderWidth = static_cast<int32_t>(displayWidth * renderTargetManager.dynamicWidthRatio);
+		if (displayWidth <= 0 || renderWidth <= 0) {
+			return;
+		}
 
-		state->currentFrame = phase;
+		const int32_t phaseCount = GetJitterPhaseCount(renderWidth, displayWidth);
+		const float2 jitter = GetJitterOffset(static_cast<int32_t>(state->frameCount), phaseCount);
+		const float2 subpixel{ jitter.x * 2.0f, jitter.y * 2.0f };
+
+		state->currentFrame = state->frameCount % phaseCount;
 		state->offsetX = subpixel.x / static_cast<float>(state->screenWidth);
 		state->offsetY = subpixel.y / static_cast<float>(state->screenHeight);
 
