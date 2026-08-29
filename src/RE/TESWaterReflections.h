@@ -21,7 +21,6 @@ namespace RE
 			kDirty = 1 << 0,
 			kStaticCubemap = 1 << 1,
 			kDynamicCubemap = 1 << 2,
-			kWorldOrigin = 1 << 2,
 			kInterior = 1 << 3,
 			kSilhouette = 1 << 4,
 			kLODScene = 1 << 5,
@@ -31,7 +30,7 @@ namespace RE
 			kExplosions = 1 << 9,
 			kSelective = 1 << 10,
 			kDontUpdate = 1 << 11,
-			kMapMode = 1 << 12
+			kWorldOrigin = 1 << 12
 		};
 
 		struct CubeMapSide
@@ -51,7 +50,10 @@ namespace RE
 		void*                              unk38;              // 38
 		void*                              waterMaterial;      // 40
 		float                              timer;              // 48
-		std::uint32_t                      pad4C;              // 4C
+		std::uint32_t                      cubeMapSideIndex;   // 4C
 		CubeMapSide                        cubeMapSides[6];    // 50
+		std::uint8_t                       rendered;           // 80
+		std::uint8_t                       pad81[7];           // 81
 	};
+	static_assert(sizeof(TESWaterReflections) == 0x88);
 }

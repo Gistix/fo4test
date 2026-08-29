@@ -266,9 +266,23 @@ public:
 			auto* tesWaterSystem = RE::TESWaterSystem::GetSingleton();
 
 			if (tesWaterSystem) {
-				if (tesWaterSystem->waterReflections.empty()) {
-					tesWaterSystem->waterReflections.push_back(Raytracing::GetSingleton()->waterReflections);
+				auto& waterRefl = Raytracing::GetSingleton()->waterReflections;
+
+				bool attach = true;
+
+				// Fallout 4 seems to always have an TESWaterReflection
+				if (!tesWaterSystem->waterReflections.empty()) {
+					for (auto& item: tesWaterSystem->waterReflections)
+					{
+						if (item == waterRefl) {
+							attach = false;
+							break;
+						}
+					}
 				}
+
+				if (attach)
+					tesWaterSystem->waterReflections.push_back(waterRefl);
 
 				tesWaterSystem->Enable();
 			}
@@ -281,13 +295,10 @@ public:
 			static BGSActorCellEventHandler singleton;
 
 			auto* player = RE::PlayerCharacter::GetSingleton();
-			if (player) {
-				static_cast<RE::BSTEventSource<RE::BGSActorCellEvent>*>(player)->RegisterSink(&singleton);
-				logger::info("Registered {}", typeid(singleton).name());
-				return true;
-			}
+			static_cast<RE::BSTEventSource<RE::BGSActorCellEvent>*>(player)->RegisterSink(&singleton);
+			logger::info("Registered {}", typeid(singleton).name());
 
-			return false;
+			return true;
 		}
 	};
 
@@ -308,6 +319,33 @@ public:
 				func(This, a_true);
 				if (!a_true)
 					Raytracing::GetSingleton()->PostDisplay();
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+
+		struct DrawWorld_SetWaterEnable
+		{
+			static void thunk(bool)
+			{
+				func(true);
+			}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
+		
+		struct DrawWorld_UpdateWater
+		{
+			static void thunk()
+			{
+				auto* tes = RE::TES::GetSingleton();
+				if (tes->interiorCell) {
+					if (tes->interiorCell->cellFlags.none(RE::TESObjectCELL::Flag::kHasWater))
+						tes->interiorCell->cellFlags.set(true, RE::TESObjectCELL::Flag::kHasWater);
+				}
+
+				auto rt = Raytracing::GetSingleton();
+				rt->waterReflections->flags.set(true, RE::TESWaterReflections::Flags::kDirty);
+
+				func();
 			}
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
@@ -366,6 +404,8 @@ public:
 
 			//stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
 			//stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
+			//stl::detour_thunk<DrawWorld_SetWaterEnable>(REL::ID(2318351));
+			stl::detour_thunk<DrawWorld_UpdateWater>(REL::ID(2318288));
 			stl::detour_thunk<DrawWorld_MainRenderSetup>(REL::ID(2318298));
 			stl::write_thunk_call<DrawWorld_NotifyDoneRendering>(REL::ID(2228969).address() + 0x11C);
 			//stl::write_thunk_call<DrawWorld_Reticle>(REL::ID(2318315).address() + 0x53D);

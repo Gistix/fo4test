@@ -391,7 +391,7 @@ void Raytracing::SetupResources()
 
 		// Setup TESWaterReflections
 		{
-			waterReflections = RE::NiPointer<RE::TESWaterReflections>{ new RE::TESWaterReflections()};
+			waterReflections = RE::NiPointer<RE::TESWaterReflections>{ new RE::TESWaterReflections() };
 
 			waterReflections->flags.set(true, RE::TESWaterReflections::Flags::kDirty, RE::TESWaterReflections::Flags::kDynamicCubemap, RE::TESWaterReflections::Flags::kWorldOrigin);
 
@@ -963,6 +963,10 @@ void Raytracing::PreRenderSetup()
 		// Ensure engine builds jittered matrices in cameraDataCache even if game TAA was off
 		state->taaDisableCounter = 1;
 	}
+
+
+	static REL::Relocation<bool> waterEnabled{ REL::ID(4784628) };
+	waterEnabled = true;
 }
 
 void Raytracing::PostRenderSetup()
@@ -1071,41 +1075,36 @@ void Raytracing::PostRender()
 		auto rendererData = RE::BSGraphics::RendererData::GetSingleton();
 		auto context = reinterpret_cast<ID3D11DeviceContext*>(rendererData->context);
 
-		auto& target = rendererData->renderTargets[(uint)RenderTarget::kMainTemp];
-		ID3D11UnorderedAccessView* uav = mainTempUAV ? mainTempUAV.get() : reinterpret_cast<ID3D11UnorderedAccessView*>(target.uaView);
+		winrt::com_ptr<ID3DUserDefinedAnnotation> annotation;
+		if (settings.enableRenderDoc && SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&annotation)))) {
+			annotation->BeginEvent(L"Path Tracing - Composite PT Main");
+		}
 
-		if (uav) {
-			winrt::com_ptr<ID3DUserDefinedAnnotation> annotation;
-			if (settings.enableRenderDoc && SUCCEEDED(context->QueryInterface(IID_PPV_ARGS(&annotation)))) {
-				annotation->BeginEvent(L"Path Tracing - Composite PT Main");
-			}
+		context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
 
-			context->CSSetShader(copyPTMainCS.get(), nullptr, 0);
+		const uint32_t compositeFrame = dlssLastEvaluationSucceeded ? dlssOutputFrame : currentFrame;
+		ID3D11ShaderResourceView* srvs[] = { mainTexture[compositeFrame]->srv };
+		context->CSSetShaderResources(0, 1, srvs);
 
-			const uint32_t compositeFrame = dlssLastEvaluationSucceeded ? dlssOutputFrame : currentFrame;
-			ID3D11ShaderResourceView* srvs[] = { mainTexture[compositeFrame]->srv };
-			context->CSSetShaderResources(0, 1, srvs);
+		ID3D11UnorderedAccessView* uavs[] = { mainTempUAV.get() };
+		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-			ID3D11UnorderedAccessView* uavs[] = { uav };
-			context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
+		auto state = State_GetSingleton();
+		uint32_t dispatchX = (uint32_t)std::ceil(float(state->screenWidth) / 8.0f);
+		uint32_t dispatchY = (uint32_t)std::ceil(float(state->screenHeight) / 8.0f);
 
-			auto state = State_GetSingleton();
-			uint32_t dispatchX = (uint32_t)std::ceil(float(state->screenWidth) / 8.0f);
-			uint32_t dispatchY = (uint32_t)std::ceil(float(state->screenHeight) / 8.0f);
+		context->Dispatch(dispatchX, dispatchY, 1);
 
-			context->Dispatch(dispatchX, dispatchY, 1);
+		ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
+		context->CSSetShaderResources(0, 1, nullSRVs);
 
-			ID3D11ShaderResourceView* nullSRVs[] = { nullptr };
-			context->CSSetShaderResources(0, 1, nullSRVs);
+		ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
 
-			ID3D11UnorderedAccessView* nullUAVs[] = { nullptr };
-			context->CSSetUnorderedAccessViews(0, 1, nullUAVs, nullptr);
+		context->CSSetShader(nullptr, nullptr, 0);
 
-			context->CSSetShader(nullptr, nullptr, 0);
-
-			if (annotation) {
-				annotation->EndEvent();
-			}
+		if (annotation) {
+			annotation->EndEvent();
 		}
 	}
 
