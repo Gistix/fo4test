@@ -188,6 +188,9 @@ public:
 	std::unique_ptr<WrappedResource> normalRoughnessTexture = nullptr;
 	winrt::com_ptr<ID3D12Resource> gnmaoTexture = nullptr;
 
+	float4x4 worldToViewMatrix;
+	float4x4 viewToClipMatrix;
+
 	struct Settings {
 		bool enabled = true;
 		bool frameGenerationMode = 1;

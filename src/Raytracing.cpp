@@ -307,6 +307,8 @@ void Raytracing::PostPostLoad()
 	RE::GetINISetting("bUseWaterReflections:Water")->SetBinary(true);
 	RE::GetINISetting("bUseCubeMapReflections:Water")->SetBinary(true);
 
+	RE::GetINISetting("bUseCombinedObjects:General")->SetBinary(false);
+
 	Hooks::Install();
 }
 
@@ -1194,6 +1196,55 @@ void Raytracing::EvaluateDLSSRR()
 	evalParams.pInMotionVectors = motionVectorsTexture[currentFrame]->GetResource();
 
 	evalParams.pInSpecularHitDistance = specularHitDistance;
+
+	static LARGE_INTEGER frequency = []() {
+		LARGE_INTEGER freq;
+		QueryPerformanceFrequency(&freq);
+		return freq;
+	}();
+
+	static LARGE_INTEGER lastFrameTime = []() {
+		LARGE_INTEGER time;
+		QueryPerformanceCounter(&time);
+		return time;
+	}();
+
+	LARGE_INTEGER currentFrameTime;
+	QueryPerformanceCounter(&currentFrameTime);
+
+	float deltaTimeMsec = static_cast<float>(currentFrameTime.QuadPart - lastFrameTime.QuadPart) * 1000.0f / static_cast<float>(frequency.QuadPart);
+	lastFrameTime = currentFrameTime;
+
+	evalParams.InFrameTimeDeltaInMsec = std::clamp(deltaTimeMsec, 1.0f, 100.0f);
+
+	const auto* mainCam = RE::Main::WorldRootCamera();
+	RE::BSGraphics::CameraStateData* cameraData = nullptr;
+	for (auto& cache : state->cameraDataCache)
+	{
+		if (mainCam == cache.referenceCamera && cache.useJitter) {
+			cameraData = &cache;
+			break;
+		}
+	}
+
+	auto& camViewData = cameraData->camViewData;
+
+	// Create a translation matrix for the inverse of the camera's world position
+	DirectX::XMMATRIX translationMat = DirectX::XMMatrixTranslation(-cameraData->posAdjust.x, -cameraData->posAdjust.y, -cameraData->posAdjust.z);
+
+	// Combine view rotation with translation to get the full world-to-view matrix
+	// NRD expects worldToViewMatrix to transform from world space to camera space, including translation.
+	// So, V_full = ViewRotationMatrix * TranslationMatrix(-CameraWorldPosition)
+	DirectX::XMMATRIX worldToViewMat = DirectX::XMMatrixMultiply(translationMat, *reinterpret_cast<float4x4*>(&camViewData.viewMat));
+
+	// Set full world to view
+	std::memcpy(&worldToViewMatrix, &worldToViewMat, sizeof(float4x4));
+
+	// Set original projection
+	std::memcpy(&viewToClipMatrix, &camViewData.projMat, sizeof(float4x4));
+
+	evalParams.pInWorldToViewMatrix = reinterpret_cast<float*>(&worldToViewMatrix);
+	evalParams.pInViewToClipMatrix = reinterpret_cast<float*>(&viewToClipMatrix);
 
 	evalParams.InJitterOffsetX = -jitter.x;
 	evalParams.InJitterOffsetY = -jitter.y;
