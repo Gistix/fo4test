@@ -323,15 +323,6 @@ public:
 			static inline REL::Relocation<decltype(thunk)> func;
 		};
 
-		struct DrawWorld_SetWaterEnable
-		{
-			static void thunk(bool)
-			{
-				func(true);
-			}
-			static inline REL::Relocation<decltype(thunk)> func;
-		};
-		
 		struct DrawWorld_UpdateWater
 		{
 			static void thunk()
@@ -404,7 +395,6 @@ public:
 
 			//stl::detour_thunk<WindowSizeChanged>(REL::ID(2276824));
 			//stl::write_thunk_call<SetUseDynamicResolutionViewportAsDefaultViewport>(REL::ID(2318322).address() + 0xC5);
-			//stl::detour_thunk<DrawWorld_SetWaterEnable>(REL::ID(2318351));
 			stl::detour_thunk<DrawWorld_UpdateWater>(REL::ID(2318288));
 			stl::detour_thunk<DrawWorld_MainRenderSetup>(REL::ID(2318298));
 			stl::write_thunk_call<DrawWorld_NotifyDoneRendering>(REL::ID(2228969).address() + 0x11C);

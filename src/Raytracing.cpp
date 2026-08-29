@@ -963,10 +963,6 @@ void Raytracing::PreRenderSetup()
 		// Ensure engine builds jittered matrices in cameraDataCache even if game TAA was off
 		state->taaDisableCounter = 1;
 	}
-
-
-	static REL::Relocation<bool> waterEnabled{ REL::ID(4784628) };
-	waterEnabled = true;
 }
 
 void Raytracing::PostRenderSetup()
