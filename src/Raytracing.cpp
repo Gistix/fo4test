@@ -447,11 +447,11 @@ void Raytracing::SetupResources()
 	certSettings.Enabled = true;
 	certSettings.GeneralSettings.Mode = CreationEngineRaytracing::Mode::PathTracing;
 
-	certSettings.LightingSettings.Directional = 1.0f;
-	certSettings.LightingSettings.Point = 1.0f;
-	certSettings.LightingSettings.Emissive = 1.0f;
-	certSettings.LightingSettings.Effect = 1.0f;
-	certSettings.LightingSettings.Sky = 1.0f;
+	certSettings.LightingSettings.Directional = 2.0f;
+	certSettings.LightingSettings.Point = 2.0f;
+	certSettings.LightingSettings.Emissive = 2.0f;
+	certSettings.LightingSettings.Effect = 2.0f;
+	certSettings.LightingSettings.Sky = 2.0f;
 
 	certSettings.DebugSettings.Timings = CreationEngineRaytracing::TimingMode::Extended;
 	certSettings.DebugSettings.Markers = true;
